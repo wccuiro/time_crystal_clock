@@ -1,0 +1,679 @@
+use ndarray::{array, Array1, Array2, Axis, s};
+use ndarray::linalg::kron;
+
+use num_complex::Complex64;
+use rand::Rng;
+
+use rayon::prelude::*;
+use plotters::prelude::*;
+
+fn create_jump_operators(lambda: f64, s: f64) -> (Array2<Complex64>, Array2<Complex64>) {
+
+    let sigma_plus = array![
+        [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)],
+        [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)]
+    ];
+    let sigma_minus = array![
+        [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)],
+        [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)]
+    ];
+
+    let identity = array![
+        [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)],
+        [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)]
+    ];
+
+    let l_plus = sigma_plus - identity.mapv(|e| e * Complex64::new(1.0, 0.0) * lambda * s);
+    let l_minus = sigma_minus + identity.mapv(|e| e * Complex64::new(0.5, 0.0) * lambda * s);
+    
+    (l_plus, l_minus)
+} 
+
+fn steady_state(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64) -> (Array2<Complex64>, Array1<Complex64>, Array1<Complex64>, Array1<f64>) {
+    let delta: f64 =  ((gamma_m + gamma_p).powi(2) + 4. * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)).sqrt();
+
+    // Eigenvalues
+    let eig_val_1 = (gamma_m.powi(2) * (1. + 2. * s.powi(2) * lambda.powi(2)) + gamma_p * (gamma_p + 2. * gamma_p * s.powi(2) * lambda.powi(2) - delta) + gamma_m * (gamma_p * (2. - 4. * s.powi(2) * lambda.powi(2)) + delta)) / (2. * (gamma_m + gamma_p).powi(2) + 4. * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2));
+
+    let eig_val_2 = (gamma_m.powi(2) * (1. + 2. * s.powi(2) * lambda.powi(2)) + gamma_p * (gamma_p + 2. * gamma_p * s.powi(2) * lambda.powi(2) + delta) - gamma_m * (gamma_p * (-2. + 4. * s.powi(2) * lambda.powi(2)) + delta)) / (2. * (gamma_m + gamma_p).powi(2) + 4. * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2));
+
+    let mut eig_vals: Array1<f64> = array![eig_val_1, eig_val_2];
+    eig_vals = eig_vals.mapv(|e| e/ (eig_val_1 + eig_val_2));
+
+    // Eigenvectors
+    let i = Complex64::new(0.0, 1.0);
+
+    // psi1
+    let top1 = i * (-gamma_m - gamma_p + delta);
+    let norm1 = (2.0 * ((gamma_m + gamma_p).powi(2)
+        + 4.0 * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)
+        - gamma_m * delta
+        - gamma_p * delta))
+        .sqrt();
+    let mut psi1 = Array1::from(vec![top1 / norm1, Complex64::new(1.0, 0.0)]);
+    psi1 /= psi1.mapv(|e| e.conj()).dot(&psi1).sqrt();
+
+    // psi2
+    let top2 = -i * (gamma_m + gamma_p + delta);
+    let norm2 = (2.0 * ((gamma_m + gamma_p).powi(2)
+        + 4.0 * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)
+        + gamma_m * delta
+        + gamma_p * delta))
+        .sqrt();
+    let mut psi2 = Array1::from(vec![top2 / norm2, Complex64::new(1.0, 0.0)]);
+    psi2 /= psi2.mapv(|e| e.conj()).dot(&psi2).sqrt();
+
+
+    // Steady state density matrix
+    let a = psi1[0];
+    let b = psi1[1];
+    let op1 = array![
+        [a * a.conj(), a * b.conj()],
+        [b * a.conj(), b * b.conj()]
+    ];
+
+    // Compute |psi2><psi2|
+    let c = psi2[0];
+    let d = psi2[1];
+    let op2 = array![
+        [c * c.conj(), c * d.conj()],
+        [d * c.conj(), d * d.conj()]
+    ];
+
+    // Weighted sum
+    let mut pi = op1.mapv(|v| v * eig_vals[0]) + op2.mapv(|v| v * eig_vals[1]);
+
+    // Normalize by trace
+    let trace: f64 = (pi[(0, 0)] + pi[(1, 1)]).re;
+    pi /= Complex64::new(trace, 0.0);
+
+    (pi, psi1, psi2, eig_vals)
+}
+
+fn simulate_trajectory(
+    gamma_p: f64,
+    gamma_m: f64,
+    lambda: f64,
+    s: f64,
+    dt: f64,
+    t_max: f64,
+) -> (Array1<f64>, Array1<usize>, Vec<Array1<Complex64>>) {
+    let (l_plus, l_minus) = create_jump_operators(lambda, s);
+    let jump_ops = vec![(gamma_p, l_plus.clone(), 1), (gamma_m, l_minus.clone(), 0)];
+
+    let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -1.0) * 0.5 * gamma_m / s) + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -1.0) * 0.5 * gamma_p / s);
+
+    let (_, psi1, psi2, eigvals) = steady_state(s, lambda, gamma_p, gamma_m);
+    let mut rng = rand::thread_rng();
+    let i = if rng.gen::<f64>() < eigvals[0] { 0 } else { 1 };
+    let mut psi;
+    if i == 0 {
+        psi = psi1.clone();
+        psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
+    } else {
+        psi = psi2.clone();
+        psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
+    }
+
+    let mut t_global = 0.0;
+    let mut times = Vec::new();
+    let mut types = Vec::new();
+    let mut wfs = Vec::new();
+
+    while t_global < t_max {
+        let probs: Vec<f64> = jump_ops
+            .iter()
+            .map(|(g, l, _)| {
+                let l_dag_l = l.t().mapv(|x| x.conj()).dot(l);
+                let amp = psi.dot(&l_dag_l.dot(&psi));
+                (g / s) * amp.re * dt
+            })
+            .collect();
+
+        let p_total: f64 = probs.iter().sum();
+
+        let dpsi_nh = {
+            let h_psi = h_eff.dot(&psi);
+            let p_term = psi.mapv(|x| x * (0.5 * p_total));
+            (&h_psi * Complex64::new(0.0, -1.0) + p_term) * dt
+        };
+        psi = &psi + &dpsi_nh;
+
+        if rng.gen::<f64>() < p_total {
+            let r = rng.gen::<f64>() * p_total;
+            let mut acc = 0.0;
+            for (g, l, k) in &jump_ops {
+                let l_dag_l = l.t().mapv(|x| x.conj()).dot(l);
+                let amp = psi.dot(&l_dag_l.dot(&psi));
+                let p = (g / s) * amp.re * dt;
+                acc += p;
+                if r < acc {
+                    let denom = amp.re;
+                    let dpsi_j = l.dot(&psi).mapv(|x| x / denom);
+                    psi = &psi + &dpsi_j;
+                    psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
+                    times.push(t_global);
+                    types.push(*k);
+                    wfs.push(psi.clone());
+                    break;
+                }
+            }
+        } else {
+            let norm_factor = psi.dot(&psi).re.sqrt();
+            psi = psi.mapv(|x| x / norm_factor);
+        }
+
+        t_global += dt;
+    }
+
+    // Convert times to Array1
+    let times: Array1<f64> = Array1::from(times);
+    let types: Array1<usize> = Array1::from(types);
+
+    (times, types, wfs)
+}
+
+
+fn lindblad_simulation(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64, total_time: f64, dt: f64) -> Vec<f64> {
+    let max_steps = (total_time / dt).ceil() as usize;
+    let mut sz_exp = Vec::with_capacity(max_steps);
+
+    let (l_plus, l_minus) = create_jump_operators(lambda, s);
+
+
+    // let sigma_pm = sigma_plus.dot(&sigma_minus);
+    let identity = array![
+        [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)],
+        [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)]
+    ];
+
+    let v_identity = array![
+        Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0),
+        Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)
+    ];
+
+    let v_sigma_z = array![
+        [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)],
+        [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)],
+        [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(-1.0, 0.0), Complex64::new(0.0, 0.0)],
+        [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(-1.0, 0.0)]
+    ];
+
+
+    let term2_m = kron(&l_minus, &l_plus.t());
+    let term2_p = kron(&l_plus, &l_minus.t());
+
+    let left_p = l_minus.dot(&l_plus);
+    let right_p = l_plus.t().dot(&l_minus.t());
+
+    let left_m = l_plus.dot(&l_minus);
+    let right_m = l_minus.t().dot(&l_plus.t());
+
+    let term3_m = (kron(&left_m, &identity) + kron(&identity, &right_m)).mapv(|e| e * 0.5); 
+    let term3_p = (kron(&left_p, &identity) + kron(&identity, &right_p)).mapv(|e| e * 0.5);
+
+    let s_l = (&term2_m - &term3_m).mapv(|e| e * gamma_m / s) + (&term2_p - &term3_p).mapv(|e| e * gamma_p / s);
+
+    let (rho,_,_,_) = steady_state(s, lambda, gamma_p, gamma_m);
+    let mut v_rho: Array1<Complex64> = rho.iter().cloned().collect();
+
+    for _ in 0..max_steps {
+        v_rho = &v_rho + (&s_l.dot(&v_rho)).mapv(|e| e * dt);
+        v_rho = v_rho.mapv(|e| e / v_identity.dot(&v_rho).re);
+
+        let szz = v_identity.dot(&v_sigma_z.dot(&v_rho)).re;
+        sz_exp.push(szz);
+    }
+
+    sz_exp
+}
+
+fn compute_tick_times(
+    types: &Array1<usize>,
+    a_minus: f64,
+    a_plus: f64,
+    m: f64,
+) -> Array1<usize> {
+    let mut n_acc = 0.0;
+    let mut aux_ticks = vec![];
+    let mut next_threshold = m;
+
+    for (i, &k) in types.iter().enumerate() {
+        if k == 1 {
+            n_acc += a_plus;
+        } else {
+            n_acc += a_minus;
+        }
+
+        if n_acc >= next_threshold {
+            aux_ticks.push(i);
+            next_threshold += m;
+        }
+    }
+
+    let aux_ticks: Array1<usize> = Array1::from(aux_ticks);
+
+    aux_ticks
+}
+
+fn analyze_ticks(
+    times: &Array1<f64>,
+    types: &Array1<usize>,
+    wfs: &Vec<Array1<Complex64>>,
+    aux_ticks: &Array1<usize>,
+    beta: f64,
+    omega_c: f64,
+    pi: &Array2<Complex64>,
+) -> (Vec<f64>, Vec<usize>, Vec<f64>) {
+    let mut waiting_times = Vec::new();
+    let mut activity_ticks = Vec::new();
+    let mut entropy_ticks = Vec::new();
+
+    let ticks = aux_ticks.as_slice().expect("aux_ticks must be contiguous");
+
+    for pair in ticks.chunks(2) {
+        if pair.len() != 2 {
+            continue; // Skip incomplete pair
+        }
+        let i1 = pair[0];
+        let i2 = pair[1];
+
+        let t1 = times[i1];
+        let t2 = times[i2];
+
+        let slice_types = &types.slice(s![i1..i2]);
+        let n_plus = slice_types.iter().filter(|&&k| k == 1).count();
+        let n_minus = slice_types.iter().filter(|&&k| k == 0).count();
+
+        let q = omega_c * (n_minus as f64 - n_plus as f64);
+        let beta_q = beta * q;
+
+        let psi1 = &wfs[i1];
+        let psi2 = &wfs[i2];
+
+        let p1 = {
+            let inner = pi.dot(psi1);
+            let amp = psi1.mapv(|c| c.conj()).dot(&inner).re;
+            amp.clamp(1e-12, 1.0)
+        };
+        let p2 = {
+            let inner = pi.dot(psi2);
+            let amp = psi2.mapv(|c| c.conj()).dot(&inner).re;
+            amp.clamp(1e-12, 1.0)
+        };
+
+        let delta_spsi = p1.ln() - p2.ln();
+        let s_tick = delta_spsi + beta_q;
+
+        waiting_times.push(t2 - t1);
+        activity_ticks.push(i2 - i1);
+        entropy_ticks.push(s_tick);
+    }
+
+    (waiting_times, activity_ticks, entropy_ticks)
+}
+
+fn build_wtd(
+    gamma_p: f64,
+    gamma_m: f64,
+    lambda: f64,
+    s: f64,
+    a_minus: f64,
+    a_plus: f64,
+    m: f64,
+    beta: f64,
+    omega_c: f64,
+    n_traj: usize,
+    dt: f64,
+    t_max: f64,
+) -> (Vec<f64>, Vec<usize>, Vec<f64>) {
+    let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
+
+    // Phase 1: simulate in parallel and collect valid trajectories
+    let trajectories: Vec<_> = (0..n_traj)
+        .into_par_iter()
+        .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, t_max))
+        .filter(|(times, _, _)| times.len() >= 2)
+        .collect();
+
+    // println!("{},{},{}", trajectories[0].1.len(),trajectories[0].2.len(),trajectories[0].0.len());
+
+    // Phase 2: analyze each trajectory in parallel
+    let results: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = trajectories
+        .into_par_iter()
+        .filter_map(|(times, types, wfs)| {
+            let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
+            if aux_ticks.len() > 1 {
+                Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Combine all results
+    let mut all_waits = Vec::new();
+    let mut all_acts = Vec::new();
+    let mut all_ents = Vec::new();
+
+    for (waits, acts, ents) in results {
+        all_waits.extend(waits);
+        all_acts.extend(acts);
+        all_ents.extend(ents);
+    }
+
+    (all_waits, all_acts, all_ents)
+}
+
+// pub fn build_wtd(
+//     gamma_p: f64,
+//     gamma_m: f64,
+//     lambda: f64,
+//     s: f64,
+//     a_minus: f64,
+//     a_plus: f64,
+//     m: f64,
+//     beta: f64,
+//     omega_c: f64,
+//     n_traj: usize,
+//     dt: f64,
+//     t_max: f64,
+// ) -> (Vec<f64>, Vec<usize>, Vec<f64>) {
+//     let mut all_waits = vec![];
+//     let mut all_acts = vec![];
+//     let mut all_ents = vec![];
+
+//     let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
+
+//     for _ in 0..n_traj {
+//         let (times, types, wfs) = simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, t_max);
+//         if times.len() < 2 {
+//             continue;
+//         }
+
+//         let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
+//         if aux_ticks.len() > 1 {
+//             let (waits, acts, ents) = analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi);
+//             all_waits.extend(waits);
+//             all_acts.extend(acts);
+//             all_ents.extend(ents);
+//         }
+//     }
+
+//     (all_waits, all_acts, all_ents)
+// }
+
+fn bin_width(data: &[f64]) -> f64 {
+    if data.is_empty() {
+        return 1.0; // Default bin size if no data
+    }
+
+    fn quantile(data: &[f64], prob: f64) -> f64 {
+        let n = data.len();
+        let idx = prob * (n - 1) as f64;
+        let lo = idx.floor() as usize;
+        let hi = idx.ceil() as usize;
+        if lo == hi {
+            data[lo]
+        } else {
+            let frac = idx - lo as f64;
+            data[lo] * (1.0 - frac) + data[hi] * frac
+        }
+    }
+
+    let q1 = quantile(data, 0.25);
+    let q3 = quantile(data, 0.75);
+    let iqr = q3 - q1;
+    let n = data.len() as f64;
+
+    (2.0 * iqr) / n.cbrt()
+}    
+
+fn counts_per_bin(
+    data: &[f64],
+    bin_width: f64,
+    min: f64,
+    max: f64,
+) -> Vec<usize> {
+    let num_bins = ((max - min) / bin_width).ceil() as usize;
+    let mut counts = vec![0; num_bins];
+
+    for &value in data {
+        if value >= min && value < max {
+            let bin_index = ((value - min) / bin_width).floor() as usize;
+            if bin_index < num_bins {
+                counts[bin_index] += 1;
+            }
+        }
+    }
+
+    counts
+}
+
+
+fn plot_histogram(
+    counts: &Vec<usize>,
+    bin_width: f64,
+    min: f64,
+    max: f64,
+    filename: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+
+    // Set up drawing area
+    let root = BitMapBackend::new(filename, (800, 600)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let max_count = *counts.iter().max().unwrap_or(&0);
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Histogram", ("FiraCode Nerd Font", 40))
+        .margin(30)
+        .x_label_area_size(40)
+        .y_label_area_size(40)
+        .build_cartesian_2d(min..max, 0..max_count)?;
+
+    chart.configure_mesh()
+        .x_desc("Value")
+        .y_desc("Count")
+        .draw()?;
+
+    // Draw bars
+    for (i, &count) in counts.iter().enumerate() {
+        let x0 = min + i as f64 * bin_width;
+        let x1 = x0 + bin_width;
+        chart.draw_series(
+            std::iter::once(Rectangle::new(
+                [(x0, 0), (x1, count)],
+                BLUE.filled(),
+            )),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn plot_trajectory_avg(
+    // avg_cm: Array1<f64>,
+    // avg_rj: Array1<f64>,
+    lindblad_avg: Vec<f64>,
+    steps: usize,
+    filename: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+
+    let root = BitMapBackend::new(&filename, (1600, 1200)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Average <σ_z> trajectory", ("FiraCode Nerd Font", 30))
+        .margin(100)
+        .x_label_area_size(40)
+        .y_label_area_size(40)
+        .build_cartesian_2d(0..steps, -1.0..1.0)?;
+
+    chart.configure_mesh()
+        .x_desc("Time steps")
+        .y_desc("<σ_z>")
+        .label_style(("FiraCode Nerd Font", 30).into_font())
+        .draw()?;
+
+    // chart.draw_series(LineSeries::new(
+    //     avg_cm.iter().enumerate().map(|(x, y)| (x, *y)),
+    //     &BLUE,
+    // ))?
+    // .label("CM")
+    // .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
+
+    // chart.draw_series(LineSeries::new(
+    //     avg_rj.iter().enumerate().map(|(x, y)| (x, *y)),
+    //     &RED,
+    // ))?
+    // .label("RJ")
+    // .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+
+    chart.draw_series(LineSeries::new(
+        lindblad_avg.iter().enumerate().map(|(x, y)| (x, *y)),
+        &MAGENTA,
+    ))?
+    .label("Avg")
+    .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &MAGENTA));
+
+    chart.configure_series_labels()
+    .position(SeriesLabelPosition::UpperRight)
+    .label_font(("FiraCode Nerd Font", 40).into_font())
+    .draw()?;
+
+    Ok(())
+}
+
+
+fn main() -> Result<(), Box<dyn std::error::Error>>{
+    let s: f64 = 50.;
+    let lambda: f64 = 2.0;
+    let num_trajectories: usize = 1000; // Number of trajectories for waiting time
+    let omega_c: f64 = 0.0001; // Frequency scale
+    let beta: f64 = 2. * omega_c; // Inverse temperature
+    let betawc = beta*omega_c;
+    let gamma_z = 1./1000.*omega_c;
+    let nb = 1./(betawc.exp()-1.);
+    let gamma_p: f64 = gamma_z/s * nb;
+    let gamma_m: f64 = gamma_z/s * ( nb + 1.);
+    let dt: f64 = 0.01;
+    let t_max: f64 = 1200.0;
+    let a_minus: f64 = 1.0; // Weight for emission
+    let a_plus: f64 = 1.0; // Weight for absorption
+    let m: f64 = 1100.; // Threshold for waiting time
+
+    // Calculate number of steps as usize
+    let steps: usize = (t_max / dt).ceil() as usize;
+
+    // let (pi, psi1, psi2, vals): (Array2<Complex64>, Array1<Complex64>, Array1<Complex64>, Array1<f64>) = steady_state(s, lambda, gamma_p, gamma_m);
+
+    // let v_pi: Array1<Complex64> = pi.iter().cloned().collect();
+    
+    // let rho_norm = lindblad_simulation(s, lambda, gamma_p, gamma_m, t_max, dt);
+    // println!("{:?}", rho_norm);
+
+    // plot_trajectory_avg(rho_norm, steps, "trajectory_avg.png")?;
+
+    
+    // --- 1. Generate data ---
+    let (waits, _activities, _entropies) = build_wtd(
+        gamma_p,             // emission rate
+        gamma_m,             // absorption rate
+        lambda,            // lambda parameter
+        s,              // spin size
+        a_minus,        // weight for emission
+        a_plus,         // weight for absorption
+        m,              // threshold
+        beta,           // inverse temperature
+        omega_c,        // frequency scale
+        num_trajectories,
+        dt,         // number of trajectories
+        t_max           // max time per trajectory
+    );
+    
+
+    // --- 2. Sort the waiting times ---
+    let mut sorted_waits = waits.clone();
+    sorted_waits.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    
+    // --- 3. Compute bin width using IQR rule ---
+    let bw = bin_width(&sorted_waits);
+    
+    // --- 4. Determine range ---
+    let min = *sorted_waits.first().unwrap_or(&0.0);
+    let max = *sorted_waits.last().unwrap_or(&1.0);
+    
+    // --- 5. Count frequencies per bin ---
+    let counts = counts_per_bin(&sorted_waits, bw, min, max);
+    
+    // --- 6. Plot histogram ---
+    plot_histogram(&counts, bw, min, max, "wtd_histogram.png")?;
+    
+    println!("Simulation completed successfully!");
+    
+    // // Run simulations in parallel, passing total_time
+    // let (trajectories_cm, times_jumps_cm): (Vec<Vec<f64>> , Vec<Vec<f64>>) = (0..num_trajectories)
+    //     .into_par_iter()
+    //     .map(|_| simulate_spin_jump_cm(omega, gamma, dt, total_time))
+    //     .unzip();
+
+    // // Run simulations in parallel, passing total_time
+    // let (trajectories_rj, times_jumps_rj): (Vec<Vec<f64>> , Vec<Vec<f64>>) = (0..num_trajectories)
+    //     .into_par_iter()
+    //     .map(|_| simulate_spin_jump_rj(omega, gamma, dt, total_time))
+    //     .unzip();
+    
+    // let lindblad_avg: Vec<f64> = lindblad_simulation(omega, gamma, dt, total_time);
+
+    // let mut flat_times_jumps_cm: Vec<f64> = times_jumps_cm.into_iter().flatten().collect();
+    // flat_times_jumps_cm.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    // let mut flat_times_jumps_rj: Vec<f64> = times_jumps_rj.into_iter().flatten().collect();
+    // flat_times_jumps_rj.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    // let bin_width_cm = bin_width(&flat_times_jumps_cm);
+    // let bin_width_rj = bin_width(&flat_times_jumps_rj);
+
+
+    // let counts_cm = counts_per_bin(
+    //     &flat_times_jumps_cm,
+    //     bin_width_cm,
+    //     0.0,
+    //     total_time,
+    // );
+
+    // let counts_rj = counts_per_bin(
+    //     &flat_times_jumps_rj,
+    //     bin_width_rj,
+    //     0.0,
+    //     total_time,
+    // );
+
+    // let filename_cm = format!("histogram_cm_omega-{}_gamma-{}_dt-{}_ntraj-{}.png", omega, gamma, dt, num_trajectories);
+    // plot_histogram(&counts_cm, bin_width_cm, 0.0, total_time, &filename_cm)?;
+
+    // let filename_rj = format!("histogram_rj_omega-{}_gamma-{}_dt-{}_ntraj-{}.png", omega, gamma, dt, num_trajectories);
+    // plot_histogram(&counts_rj, bin_width_rj, 0.0, total_time, &filename_rj)?;
+
+
+    // // Flatten and reshape into 2D array
+    // let flat_cm: Vec<f64> = trajectories_cm.into_iter().flatten().collect();
+    // let data_cm = Array2::from_shape_vec((num_trajectories, steps), flat_cm)?;
+
+    // let flat_rj: Vec<f64> = trajectories_rj.into_iter().flatten().collect();
+    // let data_rj = Array2::from_shape_vec((num_trajectories, steps), flat_rj)?;
+
+    // // Mean over rows (trajectories)
+    // let avg_cm: Array1<f64> = data_cm.mean_axis(Axis(0)).unwrap();
+
+    // let avg_rj: Array1<f64> = data_rj.mean_axis(Axis(0)).unwrap();
+
+    // // Plot the average trajectory
+    // let filename = format!("plot_omega-{}_gamma-{}_dt-{}_ntraj-{}.png", omega, gamma, dt, num_trajectories);
+    // plot_trajectory_avg(avg_cm, avg_rj, lindblad_avg, steps, &filename)?;
+
+    // println!("Simulation completed successfully!");
+    // println!("Generated files: {}, {}, {}", filename_cm, filename_rj, filename);
+    Ok(())
+}
