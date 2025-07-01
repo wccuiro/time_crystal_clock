@@ -558,7 +558,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let gamma_p: f64 = gamma_z/s * nb;
     let gamma_m: f64 = gamma_z/s * ( nb + 1.);
     let dt: f64 = 0.01;
-    let t_max: f64 = 1200.0;
+    let t_max: f64 = 3000.0;
     let a_minus: f64 = 1.0; // Weight for emission
     let a_plus: f64 = 1.0; // Weight for absorption
     let m: f64 = 1100.; // Threshold for waiting time
