@@ -101,12 +101,16 @@ fn simulate_trajectory(
     let (l_plus, l_minus) = create_jump_operators(lambda, s);
     let jump_ops = vec![(gamma_p, l_plus.clone(), 1), (gamma_m, l_minus.clone(), 0)];
 
-    let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -1.0) * 0.5 * gamma_m / s) + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -1.0) * 0.5 * gamma_p / s);
+    let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
+                + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
 
     let (_, psi1, psi2, eigvals) = steady_state(s, lambda, gamma_p, gamma_m);
     let mut rng = rand::thread_rng();
     let i = if rng.gen::<f64>() < eigvals[0] { 0 } else { 1 };
     let mut psi;
+
+    let steps: usize = (t_max / dt).ceil() as usize;
+
     if i == 0 {
         psi = psi1.clone();
         psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
@@ -120,37 +124,36 @@ fn simulate_trajectory(
     let mut types = Vec::new();
     let mut wfs = Vec::new();
 
-    while t_global < t_max {
+    for i in 0..steps{
         let probs: Vec<f64> = jump_ops
             .iter()
             .map(|(g, l, _)| {
                 let l_dag_l = l.t().mapv(|x| x.conj()).dot(l);
-                let amp = psi.dot(&l_dag_l.dot(&psi));
+                let amp = psi.mapv(|e| e.conj()).dot(&l_dag_l.dot(&psi));
                 (g / s) * amp.re * dt
             })
             .collect();
-
+    
         let p_total: f64 = probs.iter().sum();
-
+    
         let dpsi_nh = {
             let h_psi = h_eff.dot(&psi);
             let p_term = psi.mapv(|x| x * (0.5 * p_total));
-            (&h_psi * Complex64::new(0.0, -1.0) + p_term) * dt
+            (&h_psi * Complex64::new(0.0, -1.0))* dt + p_term 
         };
-        psi = &psi + &dpsi_nh;
-
-        if rng.gen::<f64>() < p_total {
-            let r = rng.gen::<f64>() * p_total;
+    
+        let r = rng.gen::<f64>();
+        if r <= p_total {
             let mut acc = 0.0;
             for (g, l, k) in &jump_ops {
                 let l_dag_l = l.t().mapv(|x| x.conj()).dot(l);
-                let amp = psi.dot(&l_dag_l.dot(&psi));
+                let amp = psi.mapv(|c| c.conj()).dot(&l_dag_l.dot(&psi));
                 let p = (g / s) * amp.re * dt;
-                acc += p;
+                acc += p ;
                 if r < acc {
                     let denom = amp.re;
-                    let dpsi_j = l.dot(&psi).mapv(|x| x / denom);
-                    psi = &psi + &dpsi_j;
+                    let dpsi_j = l.dot(&psi).mapv(|x| x / denom.sqrt());
+                    psi = &dpsi_j + &dpsi_nh;
                     psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
                     times.push(t_global);
                     types.push(*k);
@@ -159,10 +162,10 @@ fn simulate_trajectory(
                 }
             }
         } else {
-            let norm_factor = psi.dot(&psi).re.sqrt();
-            psi = psi.mapv(|x| x / norm_factor);
+            psi = &psi + &dpsi_nh;
+            psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
         }
-
+    
         t_global += dt;
     }
 
@@ -230,11 +233,11 @@ fn lindblad_simulation(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64, total_ti
 
 fn compute_tick_times(
     types: &Array1<usize>,
-    a_minus: f64,
-    a_plus: f64,
-    m: f64,
+    a_minus: usize,
+    a_plus: usize,
+    m: usize,
 ) -> Array1<usize> {
-    let mut n_acc = 0.0;
+    let mut n_acc: usize = 0;
     let mut aux_ticks = vec![];
     let mut next_threshold = m;
 
@@ -252,7 +255,6 @@ fn compute_tick_times(
     }
 
     let aux_ticks: Array1<usize> = Array1::from(aux_ticks);
-
     aux_ticks
 }
 
@@ -271,7 +273,7 @@ fn analyze_ticks(
 
     let ticks = aux_ticks.as_slice().expect("aux_ticks must be contiguous");
 
-    for pair in ticks.chunks(2) {
+    for pair in ticks.windows(2) {
         if pair.len() != 2 {
             continue; // Skip incomplete pair
         }
@@ -318,9 +320,9 @@ fn build_wtd(
     gamma_m: f64,
     lambda: f64,
     s: f64,
-    a_minus: f64,
-    a_plus: f64,
-    m: f64,
+    a_minus: usize,
+    a_plus: usize,
+    m: usize,
     beta: f64,
     omega_c: f64,
     n_traj: usize,
@@ -365,43 +367,6 @@ fn build_wtd(
     (all_waits, all_acts, all_ents)
 }
 
-// pub fn build_wtd(
-//     gamma_p: f64,
-//     gamma_m: f64,
-//     lambda: f64,
-//     s: f64,
-//     a_minus: f64,
-//     a_plus: f64,
-//     m: f64,
-//     beta: f64,
-//     omega_c: f64,
-//     n_traj: usize,
-//     dt: f64,
-//     t_max: f64,
-// ) -> (Vec<f64>, Vec<usize>, Vec<f64>) {
-//     let mut all_waits = vec![];
-//     let mut all_acts = vec![];
-//     let mut all_ents = vec![];
-
-//     let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
-
-//     for _ in 0..n_traj {
-//         let (times, types, wfs) = simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, t_max);
-//         if times.len() < 2 {
-//             continue;
-//         }
-
-//         let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
-//         if aux_ticks.len() > 1 {
-//             let (waits, acts, ents) = analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi);
-//             all_waits.extend(waits);
-//             all_acts.extend(acts);
-//             all_ents.extend(ents);
-//         }
-//     }
-
-//     (all_waits, all_acts, all_ents)
-// }
 
 fn bin_width(data: &[f64]) -> f64 {
     if data.is_empty() {
@@ -434,7 +399,7 @@ fn counts_per_bin(
     bin_width: f64,
     min: f64,
     max: f64,
-) -> Vec<usize> {
+) -> Vec<f64> {
     let num_bins = ((max - min) / bin_width).ceil() as usize;
     let mut counts = vec![0; num_bins];
 
@@ -447,12 +412,15 @@ fn counts_per_bin(
         }
     }
 
-    counts
+    let total: f64 = counts.iter().sum::<usize>() as f64;
+    let norm_counts: Vec<f64> = counts.iter().map(|&e| e as f64 / total).collect();
+
+    norm_counts
 }
 
 
 fn plot_histogram(
-    counts: &Vec<usize>,
+    counts: &Vec<f64>,
     bin_width: f64,
     min: f64,
     max: f64,
@@ -463,14 +431,18 @@ fn plot_histogram(
     let root = BitMapBackend::new(filename, (800, 600)).into_drawing_area();
     root.fill(&WHITE)?;
 
-    let max_count = *counts.iter().max().unwrap_or(&0);
+    let max_count = counts
+        .iter()
+        .cloned()
+        .fold(0.0, f64::max);
+
 
     let mut chart = ChartBuilder::on(&root)
         .caption("Histogram", ("FiraCode Nerd Font", 40))
         .margin(30)
         .x_label_area_size(40)
         .y_label_area_size(40)
-        .build_cartesian_2d(min..max, 0..max_count)?;
+        .build_cartesian_2d(min..max, 0.0..max_count)?;
 
     chart.configure_mesh()
         .x_desc("Value")
@@ -483,7 +455,7 @@ fn plot_histogram(
         let x1 = x0 + bin_width;
         chart.draw_series(
             std::iter::once(Rectangle::new(
-                [(x0, 0), (x1, count)],
+                [(x0, 0.), (x1, count)],
                 BLUE.filled(),
             )),
         )?;
@@ -549,19 +521,21 @@ fn plot_trajectory_avg(
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     let s: f64 = 50.;
     let lambda: f64 = 2.0;
-    let num_trajectories: usize = 1000; // Number of trajectories for waiting time
-    let omega_c: f64 = 0.0001; // Frequency scale
-    let beta: f64 = 2. * omega_c; // Inverse temperature
-    let betawc = beta*omega_c;
-    let gamma_z = 1./1000.*omega_c;
-    let nb = 1./(betawc.exp()-1.);
+    let omega_c: f64 = 0.01; // Frequency scale
+    let beta: f64 = 2. / omega_c; // Inverse temperature
+    let betawc = beta * omega_c;
+    let gamma_z = 1. ;// 1./1000.*omega_c;
+    let nb = 1./(betawc.exp() - 1.);
     let gamma_p: f64 = gamma_z/s * nb;
     let gamma_m: f64 = gamma_z/s * ( nb + 1.);
+
+    let num_trajectories: usize = 1000; // Number of trajectories for waiting time
     let dt: f64 = 0.01;
-    let t_max: f64 = 3000.0;
-    let a_minus: f64 = 1.0; // Weight for emission
-    let a_plus: f64 = 1.0; // Weight for absorption
-    let m: f64 = 1100.; // Threshold for waiting time
+    let t_max: f64 = 4000.0;
+
+    let a_minus: usize = 1; // Weight for emission
+    let a_plus: usize = 0; // Weight for absorption
+    let m: usize = 355; // Threshold for waiting time
 
     // Calculate number of steps as usize
     let steps: usize = (t_max / dt).ceil() as usize;
@@ -577,7 +551,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     
     // --- 1. Generate data ---
-    let (waits, _activities, _entropies) = build_wtd(
+    let (waits, _activities, entropies) = build_wtd(
         gamma_p,             // emission rate
         gamma_m,             // absorption rate
         lambda,            // lambda parameter
@@ -592,6 +566,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         t_max           // max time per trajectory
     );
     
+    let arr = Array1::from(entropies); // assuming entropies: Vec<f64>
+
+    let mean = (arr.mapv(|e| (-1.* e).exp()).sum().ln() - 
+        (arr.len() as f64).ln()).exp() ;// Mean of entropies, using log mean
+    let std_dev = arr.std(0.0); // 0.0 = population std dev, use 1.0 for sample std dev
+
+    println!("Mean of entropies: {}", mean);
+    println!("Standard deviation of entropies: {}", std_dev);
 
     // --- 2. Sort the waiting times ---
     let mut sorted_waits = waits.clone();
@@ -608,72 +590,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let counts = counts_per_bin(&sorted_waits, bw, min, max);
     
     // --- 6. Plot histogram ---
-    plot_histogram(&counts, bw, min, max, "wtd_histogram.png")?;
+    let filename = format!("WTD-histogram__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, t_max, num_trajectories);
+    plot_histogram(&counts, bw, min, max, &filename)?;
     
     println!("Simulation completed successfully!");
     
-    // // Run simulations in parallel, passing total_time
-    // let (trajectories_cm, times_jumps_cm): (Vec<Vec<f64>> , Vec<Vec<f64>>) = (0..num_trajectories)
-    //     .into_par_iter()
-    //     .map(|_| simulate_spin_jump_cm(omega, gamma, dt, total_time))
-    //     .unzip();
 
-    // // Run simulations in parallel, passing total_time
-    // let (trajectories_rj, times_jumps_rj): (Vec<Vec<f64>> , Vec<Vec<f64>>) = (0..num_trajectories)
-    //     .into_par_iter()
-    //     .map(|_| simulate_spin_jump_rj(omega, gamma, dt, total_time))
-    //     .unzip();
-    
-    // let lindblad_avg: Vec<f64> = lindblad_simulation(omega, gamma, dt, total_time);
-
-    // let mut flat_times_jumps_cm: Vec<f64> = times_jumps_cm.into_iter().flatten().collect();
-    // flat_times_jumps_cm.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    // let mut flat_times_jumps_rj: Vec<f64> = times_jumps_rj.into_iter().flatten().collect();
-    // flat_times_jumps_rj.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    // let bin_width_cm = bin_width(&flat_times_jumps_cm);
-    // let bin_width_rj = bin_width(&flat_times_jumps_rj);
-
-
-    // let counts_cm = counts_per_bin(
-    //     &flat_times_jumps_cm,
-    //     bin_width_cm,
-    //     0.0,
-    //     total_time,
-    // );
-
-    // let counts_rj = counts_per_bin(
-    //     &flat_times_jumps_rj,
-    //     bin_width_rj,
-    //     0.0,
-    //     total_time,
-    // );
-
-    // let filename_cm = format!("histogram_cm_omega-{}_gamma-{}_dt-{}_ntraj-{}.png", omega, gamma, dt, num_trajectories);
-    // plot_histogram(&counts_cm, bin_width_cm, 0.0, total_time, &filename_cm)?;
-
-    // let filename_rj = format!("histogram_rj_omega-{}_gamma-{}_dt-{}_ntraj-{}.png", omega, gamma, dt, num_trajectories);
-    // plot_histogram(&counts_rj, bin_width_rj, 0.0, total_time, &filename_rj)?;
-
-
-    // // Flatten and reshape into 2D array
-    // let flat_cm: Vec<f64> = trajectories_cm.into_iter().flatten().collect();
-    // let data_cm = Array2::from_shape_vec((num_trajectories, steps), flat_cm)?;
-
-    // let flat_rj: Vec<f64> = trajectories_rj.into_iter().flatten().collect();
-    // let data_rj = Array2::from_shape_vec((num_trajectories, steps), flat_rj)?;
-
-    // // Mean over rows (trajectories)
-    // let avg_cm: Array1<f64> = data_cm.mean_axis(Axis(0)).unwrap();
-
-    // let avg_rj: Array1<f64> = data_rj.mean_axis(Axis(0)).unwrap();
-
-    // // Plot the average trajectory
-    // let filename = format!("plot_omega-{}_gamma-{}_dt-{}_ntraj-{}.png", omega, gamma, dt, num_trajectories);
-    // plot_trajectory_avg(avg_cm, avg_rj, lindblad_avg, steps, &filename)?;
-
-    // println!("Simulation completed successfully!");
-    // println!("Generated files: {}, {}, {}", filename_cm, filename_rj, filename);
     Ok(())
 }
