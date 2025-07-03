@@ -44,23 +44,25 @@ fn steady_state(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64) -> (Array2<Comp
     let i = Complex64::new(0.0, 1.0);
 
     // psi1
-    let top1 = i * (-gamma_m - gamma_p + delta);
+    let top11 = i * (-gamma_m - gamma_p + delta);
     let norm1 = (2.0 * ((gamma_m + gamma_p).powi(2)
         + 4.0 * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)
         - gamma_m * delta
         - gamma_p * delta))
         .sqrt();
-    let mut psi1 = Array1::from(vec![top1 / norm1, Complex64::new(1.0, 0.0)]);
+    let top12 = (4. * (gamma_m - gamma_p).powi(2) * s.powi(w) * lambda.powi(2)).sqrt()
+    let mut psi1 = Array1::from(vec![top11 / norm1, top12 / norm1]);
     psi1 /= psi1.mapv(|e| e.conj()).dot(&psi1).sqrt();
 
     // psi2
-    let top2 = -i * (gamma_m + gamma_p + delta);
+    let top21 = -i * (gamma_m + gamma_p + delta);
     let norm2 = (2.0 * ((gamma_m + gamma_p).powi(2)
         + 4.0 * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)
         + gamma_m * delta
         + gamma_p * delta))
         .sqrt();
-    let mut psi2 = Array1::from(vec![top2 / norm2, Complex64::new(1.0, 0.0)]);
+    let top22 = (4. * (gamma_m - gamma_p).powi(2) * s.powi(w) * lambda.powi(2)).sqrt()
+    let mut psi2 = Array1::from(vec![top21 / norm2, top22 / norm2]);
     psi2 /= psi2.mapv(|e| e.conj()).dot(&psi2).sqrt();
 
 
