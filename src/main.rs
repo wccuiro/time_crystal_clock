@@ -23,8 +23,8 @@ fn create_jump_operators(lambda: f64, s: f64) -> (Array2<Complex64>, Array2<Comp
         [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)]
     ];
 
-    let l_plus = sigma_plus - identity.mapv(|e| e * Complex64::new(1.0, 0.0) * lambda * s);
-    let l_minus = sigma_minus + identity.mapv(|e| e * Complex64::new(0.5, 0.0) * lambda * s);
+    let l_plus = sigma_plus - identity.mapv(|e| e * Complex64::new(0.0, 1.0) * lambda * s);
+    let l_minus = sigma_minus + identity.mapv(|e| e * Complex64::new(0.0, 1.0) * lambda * s);
     
     (l_plus, l_minus)
 } 
@@ -50,8 +50,8 @@ fn steady_state(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64) -> (Array2<Comp
         - gamma_m * delta
         - gamma_p * delta))
         .sqrt();
-    let top12 = (4. * (gamma_m - gamma_p).powi(2) * s.powi(w) * lambda.powi(2)).sqrt()
-    let mut psi1 = Array1::from(vec![top11 / norm1, top12 / norm1]);
+    let top12 = (4. * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)).sqrt();
+    let mut psi1 = Array1::from(vec![top11 / norm1, Complex64::new( top12 / norm1, 0.0)]);
     psi1 /= psi1.mapv(|e| e.conj()).dot(&psi1).sqrt();
 
     // psi2
@@ -61,8 +61,8 @@ fn steady_state(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64) -> (Array2<Comp
         + gamma_m * delta
         + gamma_p * delta))
         .sqrt();
-    let top22 = (4. * (gamma_m - gamma_p).powi(2) * s.powi(w) * lambda.powi(2)).sqrt()
-    let mut psi2 = Array1::from(vec![top21 / norm2, top22 / norm2]);
+    let top22 = (4. * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)).sqrt();
+    let mut psi2 = Array1::from(vec![top21 / norm2, Complex64::new( top22 / norm2, 0.0)]);
     psi2 /= psi2.mapv(|e| e.conj()).dot(&psi2).sqrt();
 
 
@@ -157,8 +157,6 @@ fn simulate_trajectory(
             r = rng.gen::<f64>();
             
             p_p = 1.;
-
-            println!("Jump P");
             
             times.push(i as f64 * dt);
             types.push(1);
@@ -172,8 +170,6 @@ fn simulate_trajectory(
             q = rng.gen::<f64>();
             
             p_m = 1.;
-
-            println!("Jump P");
 
             times.push(i as f64 * dt);
             types.push(0);
@@ -189,11 +185,9 @@ fn simulate_trajectory(
         p_p *= 1.0 - prob_p;
 
 
-        println!("{}", prob_m)
 
     }
 
-    println!("Trajectory length: {}", times.len());
     // Convert times to Array1
     let times: Array1<f64> = Array1::from(times);
     let types: Array1<usize> = Array1::from(types);
@@ -557,20 +551,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let s: f64 = 50.;
     let lambda: f64 = 2.0;
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 0.1 / omega_c; // Inverse temperature
+    let beta: f64 = 2. / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     let gamma_p: f64 = gamma_z/s * nb;
     let gamma_m: f64 = gamma_z/s * ( nb + 1.);
 
-    let num_trajectories: usize = 1000; // Number of trajectories for waiting time
+    let num_trajectories: usize = 10000; // Number of trajectories for waiting time
     let dt: f64 = 0.001;
-    let t_max: f64 = 1000.0;
+    let t_max: f64 = 3000.0;
 
     let a_minus: usize = 1; // Weight for emission
     let a_plus: usize = 0; // Weight for absorption
-    let m: usize = 5; // Threshold for waiting time
+    let m: usize = 355; // Threshold for waiting time
 
     // Calculate number of steps as usize
     let steps: usize = (t_max / dt).ceil() as usize;
