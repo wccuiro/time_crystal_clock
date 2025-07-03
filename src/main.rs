@@ -1,4 +1,4 @@
-use ndarray::{array, Array1, Array2, Axis, s};
+use ndarray::{array, Array1, Array2, s};
 use ndarray::linalg::kron;
 
 use num_complex::Complex64;
@@ -99,18 +99,17 @@ fn simulate_trajectory(
     t_max: f64,
 ) -> (Array1<f64>, Array1<usize>, Vec<Array1<Complex64>>) {
     let (l_plus, l_minus) = create_jump_operators(lambda, s);
-    let jump_ops = vec![(gamma_p, l_plus.clone(), 1), (gamma_m, l_minus.clone(), 0)];
 
     let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
-                + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
-
+    + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
+    
     let (_, psi1, psi2, eigvals) = steady_state(s, lambda, gamma_p, gamma_m);
     let mut rng = rand::thread_rng();
     let i = if rng.gen::<f64>() < eigvals[0] { 0 } else { 1 };
     let mut psi;
-
+    
     let steps: usize = (t_max / dt).ceil() as usize;
-
+    
     if i == 0 {
         psi = psi1.clone();
         psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
@@ -119,56 +118,80 @@ fn simulate_trajectory(
         psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
     }
 
-    let mut t_global = 0.0;
     let mut times = Vec::new();
     let mut types = Vec::new();
     let mut wfs = Vec::new();
+    
+    
+    let mut r = rng.gen::<f64>();
+    let mut q = rng.gen::<f64>();
 
+    let mut p_p = 1.;
+    let mut p_m = 1.;
+    
     for i in 0..steps{
-        let probs: Vec<f64> = jump_ops
-            .iter()
-            .map(|(g, l, _)| {
-                let l_dag_l = l.t().mapv(|x| x.conj()).dot(l);
-                let amp = psi.mapv(|e| e.conj()).dot(&l_dag_l.dot(&psi));
-                (g / s) * amp.re * dt
-            })
-            .collect();
-    
-        let p_total: f64 = probs.iter().sum();
-    
+        
+        
+        let amp_m = psi.mapv(|e| e.conj()).dot(&l_plus.dot(&l_minus).dot(&psi));
+        let amp_p = psi.mapv(|e| e.conj()).dot(&l_minus.dot(&l_plus).dot(&psi));
+        
+        let prob_p = (gamma_p / s) * amp_p.re * dt;
+        let prob_m = (gamma_m / s) * amp_m.re * dt;
+        
+        let p_total = prob_p + prob_m;
+        
         let dpsi_nh = {
             let h_psi = h_eff.dot(&psi);
             let p_term = psi.mapv(|x| x * (0.5 * p_total));
             (&h_psi * Complex64::new(0.0, -1.0))* dt + p_term 
         };
-    
-        let r = rng.gen::<f64>();
-        if r <= p_total {
-            let mut acc = 0.0;
-            for (g, l, k) in &jump_ops {
-                let l_dag_l = l.t().mapv(|x| x.conj()).dot(l);
-                let amp = psi.mapv(|c| c.conj()).dot(&l_dag_l.dot(&psi));
-                let p = (g / s) * amp.re * dt;
-                acc += p ;
-                if r < acc {
-                    let denom = amp.re;
-                    let dpsi_j = l.dot(&psi).mapv(|x| x / denom.sqrt());
-                    psi = &dpsi_j + &dpsi_nh;
-                    psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
-                    times.push(t_global);
-                    types.push(*k);
-                    wfs.push(psi.clone());
-                    break;
-                }
-            }
+        
+        if r >= p_p {
+            let dpsi_j_p = l_plus.dot(&psi).mapv(|x| x / (amp_p.re).sqrt());
+            psi = dpsi_j_p;
+            psi = &psi + &dpsi_nh;
+            psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
+            
+            r = rng.gen::<f64>();
+            
+            p_p = 1.;
+
+            println!("Jump P");
+            
+            times.push(i as f64 * dt);
+            types.push(1);
+            wfs.push(psi.clone());
+        } else if q >= p_m {
+            let dpsi_j_m = l_minus.dot(&psi).mapv(|x| x / (amp_m.re).sqrt());
+            psi = dpsi_j_m;
+            psi = &psi + &dpsi_nh;
+            psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
+                        
+            q = rng.gen::<f64>();
+            
+            p_m = 1.;
+
+            println!("Jump P");
+
+            times.push(i as f64 * dt);
+            types.push(0);
+            wfs.push(psi.clone());
         } else {
+            // No jump, just evolve
             psi = &psi + &dpsi_nh;
             psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
         }
-    
-        t_global += dt;
+
+
+        p_m *= 1.0 - prob_m;
+        p_p *= 1.0 - prob_p;
+
+
+        println!("{}", prob_m)
+
     }
 
+    println!("Trajectory length: {}", times.len());
     // Convert times to Array1
     let times: Array1<f64> = Array1::from(times);
     let types: Array1<usize> = Array1::from(types);
@@ -328,7 +351,7 @@ fn build_wtd(
     n_traj: usize,
     dt: f64,
     t_max: f64,
-) -> (Vec<f64>, Vec<usize>, Vec<f64>) {
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
 
     // Phase 1: simulate in parallel and collect valid trajectories
@@ -354,17 +377,27 @@ fn build_wtd(
         .collect();
 
     // Combine all results
-    let mut all_waits = Vec::new();
-    let mut all_acts = Vec::new();
-    let mut all_ents = Vec::new();
+    let mut all_waits = Vec::new();        // flattened for histogram
+    let mut avg_acts_per_traj = Vec::new(); // one avg per trajectory
+    let mut avg_ents_per_traj = Vec::new(); // one avg per trajectory
 
     for (waits, acts, ents) in results {
-        all_waits.extend(waits);
-        all_acts.extend(acts);
-        all_ents.extend(ents);
+        all_waits.extend(waits); // flatten all waits
+
+        // Average number of actions per trajectory
+        if !acts.is_empty() {
+            let avg_act = acts.iter().map(|x| *x as f64).sum::<f64>();
+            avg_acts_per_traj.push(avg_act);
+        }
+
+        // Average entropy per trajectory
+        if !ents.is_empty() {
+            let avg_ent = ents[0];
+            avg_ents_per_traj.push(avg_ent);
+        }
     }
 
-    (all_waits, all_acts, all_ents)
+    (all_waits, avg_acts_per_traj, avg_ents_per_traj)
 }
 
 
@@ -522,7 +555,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let s: f64 = 50.;
     let lambda: f64 = 2.0;
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 2. / omega_c; // Inverse temperature
+    let beta: f64 = 0.1 / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
@@ -530,12 +563,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let gamma_m: f64 = gamma_z/s * ( nb + 1.);
 
     let num_trajectories: usize = 1000; // Number of trajectories for waiting time
-    let dt: f64 = 0.01;
-    let t_max: f64 = 4000.0;
+    let dt: f64 = 0.001;
+    let t_max: f64 = 1000.0;
 
     let a_minus: usize = 1; // Weight for emission
     let a_plus: usize = 0; // Weight for absorption
-    let m: usize = 355; // Threshold for waiting time
+    let m: usize = 5; // Threshold for waiting time
 
     // Calculate number of steps as usize
     let steps: usize = (t_max / dt).ceil() as usize;
@@ -566,14 +599,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         t_max           // max time per trajectory
     );
     
-    let arr = Array1::from(entropies); // assuming entropies: Vec<f64>
+    let arr_ent = Array1::from(entropies); // assuming entropies: Vec<f64>
 
-    let mean = (arr.mapv(|e| (-1.* e).exp()).sum().ln() - 
-        (arr.len() as f64).ln()).exp() ;// Mean of entropies, using log mean
-    let std_dev = arr.std(0.0); // 0.0 = population std dev, use 1.0 for sample std dev
+    let mean_ent = (arr_ent.mapv(|e| (-e).exp()).sum().ln() - 
+        (arr_ent.len() as f64).ln()).exp() ;// Mean of entropies, using log mean
+    let std_dev_ent = arr_ent.std(0.0); // 0.0 = population std dev, use 1.0 for sample std dev
 
-    println!("Mean of entropies: {}", mean);
-    println!("Standard deviation of entropies: {}", std_dev);
+
+    // let arr_act = Array1::from(activities); // assuming entropies: Vec<f64>
+
+    // let mean_act = (arr_act.mapv(|e| (-1.* e).exp()).sum().ln() - 
+    //     (arr_act.len() as f64).ln()).exp() ;// Mean of entropies, using log mean
+    // let std_dev_act = arr_act.std(0.0); // 0.0 = population std dev, use 1.0 for sample std dev
+
+    println!("Mean of entropies: {}", mean_ent);
+    println!("Standard deviation of entropies: {}", std_dev_ent);
+
+    // println!("Mean of entropies: {}", mean_act);
+    // println!("Standard deviation of entropies: {}", std_dev_act);
 
     // --- 2. Sort the waiting times ---
     let mut sorted_waits = waits.clone();
