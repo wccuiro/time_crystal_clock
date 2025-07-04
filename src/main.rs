@@ -330,6 +330,7 @@ fn analyze_ticks(
         activity_ticks.push(i2 - i1);
         entropy_ticks.push(s_tick);
     }
+    
 
     (waiting_times, activity_ticks, entropy_ticks)
 }
@@ -356,8 +357,6 @@ fn build_wtd(
         .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, t_max))
         .filter(|(times, _, _)| times.len() >= 2)
         .collect();
-
-    // println!("{},{},{}", trajectories[0].1.len(),trajectories[0].2.len(),trajectories[0].0.len());
 
     // Phase 2: analyze each trajectory in parallel
     let results: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = trajectories
@@ -504,12 +503,22 @@ fn plot_trajectory_avg(
     let root = BitMapBackend::new(&filename, (1600, 1200)).into_drawing_area();
     root.fill(&WHITE)?;
 
+    let min = lindblad_avg
+        .iter()
+        .cloned()
+        .fold(f64::INFINITY, f64::min);
+
+    let max = lindblad_avg
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
+
     let mut chart = ChartBuilder::on(&root)
         .caption("Average <σ_z> trajectory", ("FiraCode Nerd Font", 30))
         .margin(100)
         .x_label_area_size(40)
         .y_label_area_size(40)
-        .build_cartesian_2d(0..steps, -1.0..1.0)?;
+        .build_cartesian_2d(0..steps, (1.1 * min)..(1.1* max))?;
 
     chart.configure_mesh()
         .x_desc("Time steps")
@@ -517,19 +526,6 @@ fn plot_trajectory_avg(
         .label_style(("FiraCode Nerd Font", 30).into_font())
         .draw()?;
 
-    // chart.draw_series(LineSeries::new(
-    //     avg_cm.iter().enumerate().map(|(x, y)| (x, *y)),
-    //     &BLUE,
-    // ))?
-    // .label("CM")
-    // .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
-
-    // chart.draw_series(LineSeries::new(
-    //     avg_rj.iter().enumerate().map(|(x, y)| (x, *y)),
-    //     &RED,
-    // ))?
-    // .label("RJ")
-    // .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
 
     chart.draw_series(LineSeries::new(
         lindblad_avg.iter().enumerate().map(|(x, y)| (x, *y)),
@@ -551,32 +547,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let s: f64 = 50.;
     let lambda: f64 = 2.0;
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 2. / omega_c; // Inverse temperature
+    let beta: f64 = 2.0 / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     let gamma_p: f64 = gamma_z/s * nb;
     let gamma_m: f64 = gamma_z/s * ( nb + 1.);
 
-    let num_trajectories: usize = 10000; // Number of trajectories for waiting time
+    let num_trajectories: usize = 1000; // Number of trajectories for waiting time
     let dt: f64 = 0.001;
-    let t_max: f64 = 3000.0;
+    let t_max: f64 = 5000.0;
 
     let a_minus: usize = 1; // Weight for emission
     let a_plus: usize = 0; // Weight for absorption
-    let m: usize = 355; // Threshold for waiting time
+    let m: usize = 1100; // Threshold for waiting time
 
     // Calculate number of steps as usize
     let steps: usize = (t_max / dt).ceil() as usize;
 
-    // let (pi, psi1, psi2, vals): (Array2<Complex64>, Array1<Complex64>, Array1<Complex64>, Array1<f64>) = steady_state(s, lambda, gamma_p, gamma_m);
-
-    // let v_pi: Array1<Complex64> = pi.iter().cloned().collect();
     
-    // let rho_norm = lindblad_simulation(s, lambda, gamma_p, gamma_m, t_max, dt);
+    let rho_sz = lindblad_simulation(s, lambda, gamma_p, gamma_m, t_max, dt);
     // println!("{:?}", rho_norm);
 
-    // plot_trajectory_avg(rho_norm, steps, "trajectory_avg.png")?;
+    let filename_traj = format!("Avg_trajectory__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, t_max, num_trajectories);
+    plot_trajectory_avg(rho_sz, steps, &filename_traj)?;
 
     
     // --- 1. Generate data ---
