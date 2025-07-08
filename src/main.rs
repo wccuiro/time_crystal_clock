@@ -44,7 +44,7 @@ fn steady_state(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64) -> (Array2<Comp
     let i = Complex64::new(0.0, 1.0);
 
     // psi1
-    let top11 = i * (-gamma_m - gamma_p + delta);
+    let top11 = i * (gamma_m + gamma_p - delta);
     let norm1 = (2.0 * ((gamma_m + gamma_p).powi(2)
         + 4.0 * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)
         - gamma_m * delta
@@ -55,7 +55,7 @@ fn steady_state(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64) -> (Array2<Comp
     psi1 /= psi1.mapv(|e| e.conj()).dot(&psi1).sqrt();
 
     // psi2
-    let top21 = -i * (gamma_m + gamma_p + delta);
+    let top21 = i * (gamma_m + gamma_p + delta);
     let norm2 = (2.0 * ((gamma_m + gamma_p).powi(2)
         + 4.0 * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)
         + gamma_m * delta
