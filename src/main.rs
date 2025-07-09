@@ -7,6 +7,8 @@ use rand::Rng;
 use rayon::prelude::*;
 use plotters::prelude::*;
 
+use indicatif::{ProgressBar, ProgressStyle};
+
 fn create_jump_operators(lambda: f64, s: f64) -> (Array2<Complex64>, Array2<Complex64>) {
 
     let sigma_plus = array![
@@ -335,65 +337,65 @@ fn analyze_ticks(
     (waiting_times, activity_ticks, entropy_ticks)
 }
 
-fn build_wtd(
-    gamma_p: f64,
-    gamma_m: f64,
-    lambda: f64,
-    s: f64,
-    a_minus: usize,
-    a_plus: usize,
-    m: usize,
-    beta: f64,
-    omega_c: f64,
-    n_traj: usize,
-    dt: f64,
-    t_max: f64,
-) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-    let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
+// fn build_wtd(
+//     gamma_p: f64,
+//     gamma_m: f64,
+//     lambda: f64,
+//     s: f64,
+//     a_minus: usize,
+//     a_plus: usize,
+//     m: usize,
+//     beta: f64,
+//     omega_c: f64,
+//     n_traj: usize,
+//     dt: f64,
+//     t_max: f64,
+// ) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+//     let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
 
-    // Phase 1: simulate in parallel and collect valid trajectories
-    let trajectories: Vec<_> = (0..n_traj)
-        .into_par_iter()
-        .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, t_max))
-        .filter(|(times, _, _)| times.len() >= 2)
-        .collect();
+//     // Phase 1: simulate in parallel and collect valid trajectories
+//     let trajectories: Vec<_> = (0..n_traj)
+//         .into_par_iter()
+//         .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, t_max))
+//         .filter(|(times, _, _)| times.len() >= 2)
+//         .collect();
 
-    // Phase 2: analyze each trajectory in parallel
-    let results: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = trajectories
-        .into_par_iter()
-        .filter_map(|(times, types, wfs)| {
-            let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
-            if aux_ticks.len() > 1 {
-                Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
-            } else {
-                None
-            }
-        })
-        .collect();
+//     // Phase 2: analyze each trajectory in parallel
+//     let results: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = trajectories
+//         .into_par_iter()
+//         .filter_map(|(times, types, wfs)| {
+//             let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
+//             if aux_ticks.len() > 1 {
+//                 Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
+//             } else {
+//                 None
+//             }
+//         })
+//         .collect();
 
-    // Combine all results
-    let mut all_waits = Vec::new();        // flattened for histogram
-    let mut avg_acts_per_traj = Vec::new(); // one avg per trajectory
-    let mut avg_ents_per_traj = Vec::new(); // one avg per trajectory
+//     // Combine all results
+//     let mut all_waits = Vec::new();        // flattened for histogram
+//     let mut avg_acts_per_traj = Vec::new(); // one avg per trajectory
+//     let mut avg_ents_per_traj = Vec::new(); // one avg per trajectory
 
-    for (waits, acts, ents) in results {
-        all_waits.extend(waits); // flatten all waits
+//     for (waits, acts, ents) in results {
+//         all_waits.extend(waits); // flatten all waits
 
-        // Average number of actions per trajectory
-        if !acts.is_empty() {
-            let avg_act = acts.iter().map(|x| *x as f64).sum::<f64>();
-            avg_acts_per_traj.push(avg_act);
-        }
+//         // Average number of actions per trajectory
+//         if !acts.is_empty() {
+//             let avg_act = acts.iter().map(|x| *x as f64).sum::<f64>();
+//             avg_acts_per_traj.push(avg_act);
+//         }
 
-        // Average entropy per trajectory
-        if !ents.is_empty() {
-            let avg_ent = ents[0];
-            avg_ents_per_traj.push(avg_ent);
-        }
-    }
+//         // Average entropy per trajectory
+//         if !ents.is_empty() {
+//             let avg_ent = ents[0];
+//             avg_ents_per_traj.push(avg_ent);
+//         }
+//     }
 
-    (all_waits, avg_acts_per_traj, avg_ents_per_traj)
-}
+//     (all_waits, avg_acts_per_traj, avg_ents_per_traj)
+// }
 
 
 fn bin_width(data: &[f64]) -> f64 {
@@ -547,20 +549,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let s: f64 = 50.;
     let lambda: f64 = 2.0;
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 2.0 / omega_c; // Inverse temperature
+    let beta: f64 = 0.1 / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     let gamma_p: f64 = gamma_z/s * nb;
     let gamma_m: f64 = gamma_z/s * ( nb + 1.);
 
-    let num_trajectories: usize = 1000; // Number of trajectories for waiting time
+    let num_trajectories: usize = 300; // Number of trajectories for waiting time
     let dt: f64 = 0.001;
-    let t_max: f64 = 5000.0;
+    let t_max: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
 
     let a_minus: usize = 1; // Weight for emission
     let a_plus: usize = 0; // Weight for absorption
-    let m: usize = 1100; // Threshold for waiting time
+    let m: usize = 5; // Threshold for waiting time
 
     // Calculate number of steps as usize
     let steps: usize = (t_max / dt).ceil() as usize;
@@ -571,24 +573,83 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     let filename_traj = format!("Avg_trajectory__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, t_max, num_trajectories);
     plot_trajectory_avg(rho_sz, steps, &filename_traj)?;
+    
+    let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
 
-    
-    // --- 1. Generate data ---
-    let (waits, _activities, entropies) = build_wtd(
-        gamma_p,             // emission rate
-        gamma_m,             // absorption rate
-        lambda,            // lambda parameter
-        s,              // spin size
-        a_minus,        // weight for emission
-        a_plus,         // weight for absorption
-        m,              // threshold
-        beta,           // inverse temperature
-        omega_c,        // frequency scale
-        num_trajectories,
-        dt,         // number of trajectories
-        t_max           // max time per trajectory
+    // Create and configure progress bar for trajectories generation
+    let pb_traj = ProgressBar::new(num_trajectories as u64);
+    pb_traj.set_style(
+        ProgressStyle::default_bar()
+        .template("Running trajectories: [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+            .unwrap(),
     );
-    
+
+    // 2) Phase 1: simulate in parallel, updating the bar
+    let trajectories: Vec<(Array1<f64>, Array1<usize>, Vec<Array1<Complex64>>)> = (0..num_trajectories)
+        .into_par_iter()
+        .map_init(
+            // `pb_traj.clone()` here is cheap & thread‑safe
+            || pb_traj.clone(),
+            |pb, _| {
+                let traj = simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, t_max);
+                pb.inc(1);
+                traj
+            },
+        )
+        .filter(|(times, _, _)| times.len() >= 2)
+        .collect();
+
+    pb_traj.finish_with_message("Simulation complete.");
+
+
+    // Create and configure progress bar for data analysis
+    let pb_analyze = ProgressBar::new(trajectories.len() as u64);
+    pb_analyze.set_style(
+        ProgressStyle::default_bar()
+            .template("Analyzing: [{bar:40.green/white}] {pos}/{len} ({eta})")
+            .unwrap(),
+    );
+
+    // 2) Phase 2: analyze each trajectory in parallel with progress updates
+    let results: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = trajectories
+        .into_par_iter()
+        .map_init(
+            // `pb_analyze.clone()` is cheap & thread‑safe
+            || pb_analyze.clone(),
+            |pb, (times, types, wfs)| {
+                let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
+                pb.inc(1);
+                if aux_ticks.len() > 1 {
+                    Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
+                } else {
+                    None
+                }
+            },
+        )
+        .filter_map(|res| res)
+        .collect();
+
+    pb_analyze.finish_with_message("Analysis complete.");
+
+        // Combine all results
+    let mut waits = Vec::new();        // flattened for histogram
+    let mut _activities = Vec::new(); // one avg per trajectory
+    let mut entropies = Vec::new(); // one avg per trajectory
+
+    for (wts, acts, ents) in results {
+        waits.extend(wts); // flatten all waits
+
+        // Average number of actions per trajectory
+        if !acts.is_empty() {
+            let avg_act = acts.iter().map(|x| *x as f64).sum::<f64>();
+            _activities.push(avg_act);
+        }
+
+        entropies.extend(ents); // flatten all entropies
+    }
+
+
+
     let arr_ent = Array1::from(entropies); // assuming entropies: Vec<f64>
 
     let mean_ent = (arr_ent.mapv(|e| (-e).exp()).sum().ln() - 
@@ -609,7 +670,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     // println!("Standard deviation of entropies: {}", std_dev_act);
 
     // --- 2. Sort the waiting times ---
-    let mut sorted_waits = waits.clone();
+    let mut sorted_waits = waits;
     sorted_waits.sort_by(|a, b| a.partial_cmp(b).unwrap());
     
     // --- 3. Compute bin width using IQR rule ---
