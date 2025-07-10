@@ -254,11 +254,11 @@ fn lindblad_simulation(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64, total_ti
 
 fn compute_tick_times(
     types: &Array1<usize>,
-    a_minus: usize,
-    a_plus: usize,
+    a_minus: i32,
+    a_plus: i32,
     m: usize,
 ) -> Array1<usize> {
-    let mut n_acc: usize = 0;
+    let mut n_acc: i32 = 0;
     let mut aux_ticks = vec![];
     let mut next_threshold = m;
 
@@ -269,7 +269,7 @@ fn compute_tick_times(
             n_acc += a_minus;
         }
 
-        if n_acc >= next_threshold {
+        if n_acc >= next_threshold as i32 {
             aux_ticks.push(i);
             next_threshold += m;
         }
@@ -370,22 +370,29 @@ fn counts_per_bin(
     min: f64,
     max: f64,
 ) -> Vec<f64> {
+    // how many bins?
     let num_bins = ((max - min) / bin_width).ceil() as usize;
-    let mut counts = vec![0; num_bins];
+    let mut counts = vec![0usize; num_bins];
 
-    for &value in data {
-        if value >= min && value < max {
-            let bin_index = ((value - min) / bin_width).floor() as usize;
-            if bin_index < num_bins {
-                counts[bin_index] += 1;
+    for &v in data {
+        if v >= min && v <= max {
+            // floor to get bin index
+            let mut idx = ((v - min) / bin_width).floor() as isize;
+            // clamp exact‐max into the last bin
+            if idx == num_bins as isize {
+                idx = num_bins as isize - 1;
+            }
+            if (0..num_bins as isize).contains(&idx) {
+                counts[idx as usize] += 1;
             }
         }
     }
 
-    let total: f64 = counts.iter().sum::<usize>() as f64 *  bin_width;
-    let norm_counts: Vec<f64> = counts.iter().map(|&e| e as f64 / total).collect();
-
-    norm_counts
+    let total_area = counts.iter().sum::<usize>() as f64 * bin_width;
+    counts
+        .into_iter()
+        .map(|c| c as f64 / total_area)
+        .collect()
 }
 
 
@@ -398,7 +405,7 @@ fn plot_histogram(
 ) -> Result<(), Box<dyn std::error::Error>> {
 
     // Set up drawing area
-    let root = BitMapBackend::new(filename, (800, 600)).into_drawing_area();
+    let root = BitMapBackend::new(filename, (1600, 1200)).into_drawing_area();
     root.fill(&WHITE)?;
 
     let max_count = counts
@@ -503,19 +510,33 @@ struct SimulationConfig {
 // Results struct to organize outputs
 #[derive(Debug)]
 struct SimulationResults {
-    counts: Vec<f64>,
-    bin_width: f64,
-    num_ticks: usize,
-    entropy_tick: f64,
-    exp_entropy_tick: f64,
-    exp_entropy_mar: f64,
+    counts_n: Vec<f64>,
+    counts_k: Vec<f64>,
+    counts_q: Vec<f64>,
+    bin_width_n: f64,
+    bin_width_k: f64,
+    bin_width_q: f64,
+    num_ticks_n: usize,
+    num_ticks_k: usize,
+    num_ticks_q: usize,
+    entropy_tick_n: f64,
+    entropy_tick_k: f64,
+    entropy_tick_q: f64,
+    exp_entropy_tick_n: f64,
+    exp_entropy_tick_k: f64,
+    exp_entropy_tick_q: f64,
+    exp_entropy_mar_n: f64,
+    exp_entropy_mar_k: f64,
+    exp_entropy_mar_q: f64,
     accuracy_n: f64,
     accuracy_k: f64,
     accuracy_q: f64,
     resolution_n: f64,
     resolution_k: f64,
     resolution_q: f64,
-    activity_tick: f64,
+    activity_tick_n: f64,
+    activity_tick_k: f64,
+    activity_tick_q: f64,
 }
 
 impl SimulationConfig {
@@ -539,9 +560,7 @@ impl SimulationConfig {
 
 /// Run a complete quantum jump simulation for given parameters
 fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults, Box<dyn std::error::Error>> {
-    let a_minus: usize = 1; // Weight for emission
-    let a_plus: usize = 0; // Weight for absorption
-
+    
     let dt = config.dt;
     let total_time = config.total_time;
     let steps = config.steps;
@@ -553,52 +572,100 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let s = config.s;
     let num_trajectories = config.num_trajectories;
     let m = config.m;
-
+    
     
     let rho_sz = lindblad_simulation(s, lambda, gamma_p, gamma_m, total_time, dt);
     // println!("{:?}", rho_norm);
-
+    
     let filename_traj = format!("Avg_trajectory__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
     plot_trajectory_avg(rho_sz, steps, &filename_traj)?;
     
     let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
-
+    
     // Create and configure progress bar for trajectories generation
     let pb_traj = ProgressBar::new(num_trajectories as u64);
     pb_traj.set_style(
         ProgressStyle::default_bar()
         .template("Running trajectories: [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-            .unwrap(),
+        .unwrap(),
     );
-
+    
     // 2) Phase 1: simulate in parallel, updating the bar
     let trajectories: Vec<(Array1<f64>, Array1<usize>, Vec<Array1<Complex64>>)> = (0..num_trajectories)
-        .into_par_iter()
-        .map_init(
-            // `pb_traj.clone()` here is cheap & thread‑safe
-            || pb_traj.clone(),
-            |pb, _| {
-                let traj = simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time);
-                pb.inc(1);
-                traj
-            },
-        )
-        .filter(|(times, _, _)| times.len() >= 2)
-        .collect();
-
+    .into_par_iter()
+    .map_init(
+        // `pb_traj.clone()` here is cheap & thread‑safe
+        || pb_traj.clone(),
+        |pb, _| {
+            let traj = simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time);
+            pb.inc(1);
+            traj
+        },
+    )
+    .filter(|(times, _, _)| times.len() >= 2)
+    .collect();
+    
     pb_traj.finish_with_message("Simulation complete.");
-
-
+    
+    
     // Create and configure progress bar for data analysis
     let pb_analyze = ProgressBar::new(trajectories.len() as u64);
     pb_analyze.set_style(
         ProgressStyle::default_bar()
-            .template("Analyzing: [{bar:40.green/white}] {pos}/{len} ({eta})")
-            .unwrap(),
+        .template("Analyzing: [{bar:40.green/white}] {pos}/{len} ({eta})")
+        .unwrap(),
     );
+    
 
     // 2) Phase 2: analyze each trajectory in parallel with progress updates
-    let results: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = trajectories
+    // Considering accumulated emissions
+    let a_minus: i32 = 1; // Weight for emission
+    let a_plus: i32 = 0; // Weight for absorption
+    let results_n: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = 
+        trajectories
+            .par_iter()                    // iterate by reference, so `trajectories` is not consumed
+            .map_init(
+                || pb_analyze.clone(),     // each thread gets its own progress bar clone
+                |pb, traj| {
+                    let (times, types, wfs) = traj;
+                    let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
+                    pb.inc(1);
+                    if aux_ticks.len() > 1 {
+                        Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
+                    } else {
+                        None
+                    }
+                },
+            )
+            .filter_map(|res| res)
+            .collect();
+
+    // Considering dynamical activity
+    let a_minus: i32 = 1; // Weight for emission
+    let a_plus: i32 = 1; // Weight for absorption
+    let results_k: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = 
+        trajectories
+            .par_iter()                    // iterate by reference, so `trajectories` is not consumed
+            .map_init(
+                || pb_analyze.clone(),     // each thread gets its own progress bar clone
+                |pb, traj| {
+                    let (times, types, wfs) = traj;
+                    let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
+                    pb.inc(1);
+                    if aux_ticks.len() > 1 {
+                        Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
+                    } else {
+                        None
+                    }
+                },
+            )
+            .filter_map(|res| res)
+            .collect();    
+
+    // Considering dissipated heat current
+    let a_minus: i32 = 1; // Weight for emission
+    let a_plus: i32 = -1; // Weight for absorption
+    let results_q: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = trajectories
         .into_par_iter()
         .map_init(
             // `pb_analyze.clone()` is cheap & thread‑safe
@@ -618,79 +685,139 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
 
     pb_analyze.finish_with_message("Analysis complete.");
 
-        // Combine all results
-    let mut waits = Vec::new();        // flattened for histogram
-    let mut _activities = Vec::new(); // one avg per trajectory
-    let mut entropies = Vec::new(); // one avg per trajectory
+    // Combine all results collective emissons
+    let mut waits_n = Vec::new();        // flattened for histogram
+    let mut activities_n = Vec::new(); // one avg per trajectory
+    let mut entropies_n = Vec::new(); // one avg per trajectory
 
-    for (wts, acts, ents) in results {
-        waits.extend(wts); // flatten all waits
+    for (wts, acts, ents) in results_n {
+        waits_n.extend(wts); // flatten all waits
 
-        // Average number of actions per trajectory
-        if !acts.is_empty() {
-            let avg_act = acts.iter().map(|x| *x as f64).sum::<f64>();
-            _activities.push(avg_act);
-        }
+        activities_n.extend(acts); // flatten all activities
 
-        entropies.extend(ents); // flatten all entropies
+        entropies_n.extend(ents); // flatten all entropies
     }
 
+    let arr_ent_n = Array1::from(entropies_n); // assuming entropies: Vec<f64>
+    let mean_ent_n = arr_ent_n.mean().unwrap_or(0.0); // Mean of entropies
+    let exp_entropy_tick_n = (arr_ent_n.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_n.len() as f64).ln()).exp();
+
+    let arr_act_n: Array1<f64> = Array1::from_iter(activities_n.iter().map(|&x| x as f64));
+    let mean_act_n = arr_act_n.mean().unwrap_or(0.0); // Mean of entropies
 
 
-    let arr_ent = Array1::from(entropies); // assuming entropies: Vec<f64>
+    // Combine all results dynamical activity
+    let mut waits_k = Vec::new();        // flattened for histogram
+    let mut activities_k = Vec::new(); // one avg per trajectory
+    let mut entropies_k = Vec::new(); // one avg per trajectory
 
-    let mean_ent = (arr_ent.mapv(|e| (-e).exp()).sum().ln() - 
-        (arr_ent.len() as f64).ln()).exp() ;// Mean of entropies, using log mean
-    let std_dev_ent = arr_ent.std(0.0); // 0.0 = population std dev, use 1.0 for sample std dev
+    for (wts, acts, ents) in results_k {
+        waits_k.extend(wts); // flatten all waits
+
+        activities_k.extend(acts); // flatten all activities
+
+        entropies_k.extend(ents); // flatten all entropies
+    }
+
+    let arr_ent_k = Array1::from(entropies_k); // assuming entropies: Vec<f64>
+    let mean_ent_k = arr_ent_k.mean().unwrap_or(0.0); // Mean of entropies
+    let exp_entropy_tick_k = (arr_ent_k.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_k.len() as f64).ln()).exp() ;
+
+    let arr_act_k: Array1<f64> = Array1::from_iter(activities_k.iter().map(|&x| x as f64));
+    let mean_act_k = arr_act_k.mean().unwrap_or(0.0); // Mean of entropies
 
 
-    // let arr_act = Array1::from(activities); // assuming entropies: Vec<f64>
+    // Combine all results dynamical activity
+    let mut waits_q = Vec::new();        // flattened for histogram
+    let mut activities_q = Vec::new(); // one avg per trajectory
+    let mut entropies_q = Vec::new(); // one avg per trajectory
 
-    // let mean_act = (arr_act.mapv(|e| (-1.* e).exp()).sum().ln() - 
-    //     (arr_act.len() as f64).ln()).exp() ;// Mean of entropies, using log mean
-    // let std_dev_act = arr_act.std(0.0); // 0.0 = population std dev, use 1.0 for sample std dev
+    for (wts, acts, ents) in results_q {
+        waits_q.extend(wts); // flatten all waits
 
-    println!("Mean of entropies: {}", mean_ent);
-    println!("Standard deviation of entropies: {}", std_dev_ent);
+        activities_q.extend(acts); // flatten all activities
 
-    // println!("Mean of entropies: {}", mean_act);
-    // println!("Standard deviation of entropies: {}", std_dev_act);
+        entropies_q.extend(ents); // flatten all entropies
+    }
+
+    let arr_ent_q = Array1::from(entropies_q); // assuming entropies: Vec<f64>
+    let mean_ent_q = arr_ent_q.mean().unwrap_or(0.0); // Mean of entropies
+    let exp_entropy_tick_q = (arr_ent_q.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_q.len() as f64).ln()).exp() ;
+
+    let arr_act_q: Array1<f64> = Array1::from_iter(activities_q.iter().map(|&x| x as f64));
+    let mean_act_q = arr_act_q.mean().unwrap_or(0.0); // Mean of entropies
+
+    // Compute accuracies and resolutions
+    let mean_waits_n = waits_n.iter().copied().sum::<f64>() / waits_n.len() as f64;
+    let var_waits_n = waits_n.iter().map(|x| (x - mean_waits_n).powi(2)).sum::<f64>() / (waits_n.len() as f64 - 1.0);
+    let accuracy_n = mean_waits_n.powi(2) / var_waits_n; 
+    let resolution_n = 1.0 / mean_waits_n;
+
+    let mean_waits_k = waits_k.iter().copied().sum::<f64>() / waits_k.len() as f64;
+    let var_waits_k = waits_k.iter().map(|x| (x - mean_waits_k).powi(2)).sum::<f64>() / (waits_k.len() as f64 - 1.0);
+    let accuracy_k = mean_waits_k.powi(2) / var_waits_k; 
+    let resolution_k = 1.0 / mean_waits_k;
+
+    let mean_waits_q = waits_q.iter().copied().sum::<f64>() / waits_q.len() as f64;
+    let var_waits_q = waits_q.iter().map(|x| (x - mean_waits_q).powi(2)).sum::<f64>() / (waits_q.len() as f64 - 1.0);
+    let accuracy_q = mean_waits_q.powi(2) / var_waits_q;  
+    let resolution_q = 1.0 / mean_waits_q;
 
     // --- 2. Sort the waiting times ---
-    let mut sorted_waits = waits;
-    sorted_waits.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mut sorted_waits_n = waits_n;
+    let mut sorted_waits_k = waits_k;
+    let mut sorted_waits_q = waits_q;
+
+    sorted_waits_n.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted_waits_k.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted_waits_q.sort_by(|a, b| a.partial_cmp(b).unwrap());
     
     // --- 3. Compute bin width using IQR rule ---
-    let bw = bin_width(&sorted_waits);
+    let bw_n = bin_width(&sorted_waits_n);
+    let bw_k = bin_width(&sorted_waits_k);
+    let bw_q = bin_width(&sorted_waits_q);
     
     // --- 4. Determine range ---
-    let min = *sorted_waits.first().unwrap_or(&0.0);
-    let max = *sorted_waits.last().unwrap_or(&1.0);
+    let min = *sorted_waits_n.first().unwrap_or(&0.0);
+    let max = *sorted_waits_n.last().unwrap_or(&1.0);
     
     // --- 5. Count frequencies per bin ---
-    let counts = counts_per_bin(&sorted_waits, bw, min, max);
+    let counts_n = counts_per_bin(&sorted_waits_n, bw_n, min, max);
+    let counts_k = counts_per_bin(&sorted_waits_k, bw_n, min, max);
+    let counts_q = counts_per_bin(&sorted_waits_q, bw_n, min, max);
     
     // --- 6. Plot histogram ---
     let filename = format!("WTD-histogram__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
-    plot_histogram(&counts, bw, min, max, &filename)?;
-    
-    println!("Simulation completed successfully!");
-
+    plot_histogram(&counts_n, bw_n, min, max, &filename)?;
 
     Ok(SimulationResults {
-        counts: counts,
-        bin_width: bw,
-        num_ticks: sorted_waits.len(),
-        entropy_tick: mean_ent,
-        exp_entropy_tick: std_dev_ent,
-        exp_entropy_mar: 0.0, // Placeholder, not calculated
-        accuracy_n: 0.0, // Placeholder, not calculated
-        accuracy_k: 0.0, // Placeholder, not calculated
-        accuracy_q: 0.0, // Placeholder, not calculated
-        resolution_n: 0.0, // Placeholder, not calculated
-        resolution_k: 0.0, // Placeholder, not calculated
-        resolution_q: 0.0, // Placeholder, not calculated
-        activity_tick: 0.0, // Placeholder, not calculated
+        counts_n: counts_n,
+        counts_k: counts_k,
+        counts_q: counts_q,
+        bin_width_n: bw_n,
+        bin_width_k: bw_k,
+        bin_width_q: bw_q,
+        num_ticks_n: sorted_waits_n.len(),
+        num_ticks_k: sorted_waits_k.len(),
+        num_ticks_q: sorted_waits_q.len(),
+        entropy_tick_n: mean_ent_n,
+        entropy_tick_k: mean_ent_k,
+        entropy_tick_q: mean_ent_q,
+        exp_entropy_tick_n: exp_entropy_tick_n,
+        exp_entropy_tick_k: exp_entropy_tick_k,
+        exp_entropy_tick_q: exp_entropy_tick_q,
+        exp_entropy_mar_n: 0.0, // Placeholder, not calculated
+        exp_entropy_mar_k: 0.0, // Placeholder, not calculated
+        exp_entropy_mar_q: 0.0, // Placeholder, not calculated
+        accuracy_n: accuracy_n,
+        accuracy_k: accuracy_k,
+        accuracy_q: accuracy_q,
+        resolution_n: resolution_n,
+        resolution_k: resolution_k,
+        resolution_q: resolution_q,
+        activity_tick_n: mean_act_n,// Placeholder, not calculated
+        activity_tick_k: mean_act_k,// Placeholder, not calculated
+        activity_tick_q: mean_act_q,// Placeholder, not calculated
     })
 }
 
@@ -713,8 +840,8 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         })
         .collect();
 
-    let init_num_trajectories = 100_usize;
-    let last_num_trajectories = 100_usize;
+    let init_num_trajectories = 1000_usize;
+    let last_num_trajectories = 1000_usize;
     let vec_num_trajectories: Vec<usize> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
@@ -722,8 +849,8 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         })
         .collect();
 
-    let init_m = 5_usize;
-    let last_m = 5_usize;
+    let init_m = 355_usize;
+    let last_m = 355_usize;
     let vec_m: Vec<usize> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
@@ -737,10 +864,10 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
-    let dt: f64 = 0.001;
+    let dt: f64 = 0.01;
     let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 0.1 / omega_c; // Inverse temperature
+    let beta: f64 = 2. / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
@@ -753,19 +880,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     println!("Running simulations with S: {:?}, lambda: {:?}, n_traj: {:?} and M: {:?}", vec_s, vec_lambda, vec_num_trajectories, vec_m);
 
     // Pre-allocate result vectors
-    let mut counts_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
-    let mut bin_width_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut num_ticks_set: Vec<usize> = Vec::with_capacity(n_pts);
-    let mut entropys_tick_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut exp_entropy_tick_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut exp_entropy_mar_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut counts_n_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
+    let mut counts_k_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
+    let mut counts_q_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
+    let mut bin_width_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut bin_width_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut bin_width_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut num_ticks_n_set: Vec<usize> = Vec::with_capacity(n_pts);
+    let mut num_ticks_k_set: Vec<usize> = Vec::with_capacity(n_pts);
+    let mut num_ticks_q_set: Vec<usize> = Vec::with_capacity(n_pts);
+    let mut entropys_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut entropys_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut entropys_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut exp_entropy_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut exp_entropy_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut exp_entropy_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut exp_entropy_mar_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut exp_entropy_mar_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut exp_entropy_mar_q_set: Vec<f64> = Vec::with_capacity(n_pts);
     let mut accuracy_n_set: Vec<f64> = Vec::with_capacity(n_pts);
     let mut accuracy_k_set: Vec<f64> = Vec::with_capacity(n_pts);
     let mut accuracy_q_set: Vec<f64> = Vec::with_capacity(n_pts);
     let mut resolution_n_set: Vec<f64> = Vec::with_capacity(n_pts);
     let mut resolution_k_set: Vec<f64> = Vec::with_capacity(n_pts);
     let mut resolution_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut activity_tick_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut activity_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut activity_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut activity_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
 
     // Run simulations
     for (((&s, &lambda), &num_trajectories), &m) in vec_s.iter().zip(vec_lambda.iter()).zip(vec_num_trajectories.iter()).zip(vec_m.iter()) 
@@ -778,25 +919,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         let results = run_quantum_simulation(&config)?;
 
         // Store results
-        counts_set.push(results.counts);
-        bin_width_set.push(results.bin_width);
-        num_ticks_set .push(results.num_ticks);
-        entropys_tick_set.push(results.entropy_tick);
-        exp_entropy_tick_set.push(results.exp_entropy_tick);
-        exp_entropy_mar_set.push(results.exp_entropy_mar);
+        counts_n_set.push(results.counts_n);
+        counts_k_set.push(results.counts_k);
+        counts_q_set.push(results.counts_q);
+        bin_width_n_set.push(results.bin_width_n);
+        bin_width_k_set.push(results.bin_width_k);
+        bin_width_q_set.push(results.bin_width_q);
+        num_ticks_n_set .push(results.num_ticks_n);
+        num_ticks_k_set .push(results.num_ticks_k);
+        num_ticks_q_set .push(results.num_ticks_q);
+        entropys_tick_n_set.push(results.entropy_tick_n);
+        entropys_tick_k_set.push(results.entropy_tick_k);
+        entropys_tick_q_set.push(results.entropy_tick_q);
+        exp_entropy_tick_n_set.push(results.exp_entropy_tick_n);
+        exp_entropy_tick_k_set.push(results.exp_entropy_tick_k);
+        exp_entropy_tick_q_set.push(results.exp_entropy_tick_q);
+        exp_entropy_mar_n_set.push(results.exp_entropy_mar_n);
+        exp_entropy_mar_k_set.push(results.exp_entropy_mar_k);
+        exp_entropy_mar_q_set.push(results.exp_entropy_mar_q);
         accuracy_n_set.push(results.accuracy_n);
         accuracy_k_set.push(results.accuracy_k);
         accuracy_q_set.push(results.accuracy_q);
         resolution_n_set.push(results.resolution_n);
         resolution_k_set.push(results.resolution_k);
         resolution_q_set.push(results.resolution_q);
-        activity_tick_set.push(results.activity_tick);
+        activity_tick_n_set.push(results.activity_tick_n);
+        activity_tick_k_set.push(results.activity_tick_k);
+        activity_tick_q_set.push(results.activity_tick_q);
     }
 
+    println!("{:?}", counts_n_set[0]);
 
+    println!("Simulation completed successfully!");
 
-
-    
 
     Ok(())
 }
