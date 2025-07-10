@@ -100,7 +100,7 @@ fn simulate_trajectory(
     lambda: f64,
     s: f64,
     dt: f64,
-    t_max: f64,
+    total_time: f64,
 ) -> (Array1<f64>, Array1<usize>, Vec<Array1<Complex64>>) {
     let (l_plus, l_minus) = create_jump_operators(lambda, s);
 
@@ -112,7 +112,7 @@ fn simulate_trajectory(
     let i = if rng.gen::<f64>() < eigvals[0] { 0 } else { 1 };
     let mut psi;
     
-    let steps: usize = (t_max / dt).ceil() as usize;
+    let steps: usize = (total_time / dt).ceil() as usize;
     
     if i == 0 {
         psi = psi1.clone();
@@ -337,66 +337,6 @@ fn analyze_ticks(
     (waiting_times, activity_ticks, entropy_ticks)
 }
 
-// fn build_wtd(
-//     gamma_p: f64,
-//     gamma_m: f64,
-//     lambda: f64,
-//     s: f64,
-//     a_minus: usize,
-//     a_plus: usize,
-//     m: usize,
-//     beta: f64,
-//     omega_c: f64,
-//     n_traj: usize,
-//     dt: f64,
-//     t_max: f64,
-// ) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-//     let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
-
-//     // Phase 1: simulate in parallel and collect valid trajectories
-//     let trajectories: Vec<_> = (0..n_traj)
-//         .into_par_iter()
-//         .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, t_max))
-//         .filter(|(times, _, _)| times.len() >= 2)
-//         .collect();
-
-//     // Phase 2: analyze each trajectory in parallel
-//     let results: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = trajectories
-//         .into_par_iter()
-//         .filter_map(|(times, types, wfs)| {
-//             let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
-//             if aux_ticks.len() > 1 {
-//                 Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
-//             } else {
-//                 None
-//             }
-//         })
-//         .collect();
-
-//     // Combine all results
-//     let mut all_waits = Vec::new();        // flattened for histogram
-//     let mut avg_acts_per_traj = Vec::new(); // one avg per trajectory
-//     let mut avg_ents_per_traj = Vec::new(); // one avg per trajectory
-
-//     for (waits, acts, ents) in results {
-//         all_waits.extend(waits); // flatten all waits
-
-//         // Average number of actions per trajectory
-//         if !acts.is_empty() {
-//             let avg_act = acts.iter().map(|x| *x as f64).sum::<f64>();
-//             avg_acts_per_traj.push(avg_act);
-//         }
-
-//         // Average entropy per trajectory
-//         if !ents.is_empty() {
-//             let avg_ent = ents[0];
-//             avg_ents_per_traj.push(avg_ent);
-//         }
-//     }
-
-//     (all_waits, avg_acts_per_traj, avg_ents_per_traj)
-// }
-
 
 fn bin_width(data: &[f64]) -> f64 {
     if data.is_empty() {
@@ -442,7 +382,7 @@ fn counts_per_bin(
         }
     }
 
-    let total: f64 = counts.iter().sum::<usize>() as f64;
+    let total: f64 = counts.iter().sum::<usize>() as f64 *  bin_width;
     let norm_counts: Vec<f64> = counts.iter().map(|&e| e as f64 / total).collect();
 
     norm_counts
@@ -544,34 +484,81 @@ fn plot_trajectory_avg(
     Ok(())
 }
 
+// Configuration struct to organize parameters
+#[derive(Debug, Clone)]
+struct SimulationConfig {
+    dt: f64,
+    total_time: f64,
+    steps: usize,
+    omega_c: f64,
+    beta: f64,
+    gamma_p: f64,
+    gamma_m: f64,
+    lambda: f64,
+    s: f64,
+    num_trajectories: usize,
+    m: usize,
+}
 
-fn main() -> Result<(), Box<dyn std::error::Error>>{
-    let s: f64 = 50.;
-    let lambda: f64 = 2.0;
-    let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 0.1 / omega_c; // Inverse temperature
-    let betawc = beta * omega_c;
-    let gamma_z = 1. ;// 1./1000.*omega_c;
-    let nb = 1./(betawc.exp() - 1.);
-    let gamma_p: f64 = gamma_z/s * nb;
-    let gamma_m: f64 = gamma_z/s * ( nb + 1.);
+// Results struct to organize outputs
+#[derive(Debug)]
+struct SimulationResults {
+    counts: Vec<f64>,
+    bin_width: f64,
+    num_ticks: usize,
+    entropy_tick: f64,
+    exp_entropy_tick: f64,
+    exp_entropy_mar: f64,
+    accuracy_n: f64,
+    accuracy_k: f64,
+    accuracy_q: f64,
+    resolution_n: f64,
+    resolution_k: f64,
+    resolution_q: f64,
+    activity_tick: f64,
+}
 
-    let num_trajectories: usize = 300; // Number of trajectories for waiting time
-    let dt: f64 = 0.001;
-    let t_max: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
+impl SimulationConfig {
+    fn new(dt: f64, total_time: f64, omega_c: f64, beta: f64, gamma_p: f64, gamma_m: f64, lambda: f64, s: f64, num_trajectories: usize, m: usize) -> Self {
+        let steps = (total_time / dt).ceil() as usize;
+        Self {
+            dt,
+            total_time,
+            steps,
+            omega_c,
+            beta,
+            gamma_p,
+            gamma_m,
+            lambda,
+            s,
+            num_trajectories,
+            m,
+        }
+    }
+}
 
+/// Run a complete quantum jump simulation for given parameters
+fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults, Box<dyn std::error::Error>> {
     let a_minus: usize = 1; // Weight for emission
     let a_plus: usize = 0; // Weight for absorption
-    let m: usize = 5; // Threshold for waiting time
 
-    // Calculate number of steps as usize
-    let steps: usize = (t_max / dt).ceil() as usize;
+    let dt = config.dt;
+    let total_time = config.total_time;
+    let steps = config.steps;
+    let omega_c = config.omega_c;
+    let beta = config.beta;
+    let gamma_p = config.gamma_p;
+    let gamma_m = config.gamma_m;
+    let lambda = config.lambda;
+    let s = config.s;
+    let num_trajectories = config.num_trajectories;
+    let m = config.m;
 
     
-    let rho_sz = lindblad_simulation(s, lambda, gamma_p, gamma_m, t_max, dt);
+    let rho_sz = lindblad_simulation(s, lambda, gamma_p, gamma_m, total_time, dt);
     // println!("{:?}", rho_norm);
 
-    let filename_traj = format!("Avg_trajectory__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, t_max, num_trajectories);
+    let filename_traj = format!("Avg_trajectory__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
     plot_trajectory_avg(rho_sz, steps, &filename_traj)?;
     
     let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
@@ -591,7 +578,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
             // `pb_traj.clone()` here is cheap & thread‑safe
             || pb_traj.clone(),
             |pb, _| {
-                let traj = simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, t_max);
+                let traj = simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time);
                 pb.inc(1);
                 traj
             },
@@ -684,10 +671,131 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let counts = counts_per_bin(&sorted_waits, bw, min, max);
     
     // --- 6. Plot histogram ---
-    let filename = format!("WTD-histogram__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, t_max, num_trajectories);
+    let filename = format!("WTD-histogram__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
     plot_histogram(&counts, bw, min, max, &filename)?;
     
     println!("Simulation completed successfully!");
+
+
+    Ok(SimulationResults {
+        counts: counts,
+        bin_width: bw,
+        num_ticks: sorted_waits.len(),
+        entropy_tick: mean_ent,
+        exp_entropy_tick: std_dev_ent,
+        exp_entropy_mar: 0.0, // Placeholder, not calculated
+        accuracy_n: 0.0, // Placeholder, not calculated
+        accuracy_k: 0.0, // Placeholder, not calculated
+        accuracy_q: 0.0, // Placeholder, not calculated
+        resolution_n: 0.0, // Placeholder, not calculated
+        resolution_k: 0.0, // Placeholder, not calculated
+        resolution_q: 0.0, // Placeholder, not calculated
+        activity_tick: 0.0, // Placeholder, not calculated
+    })
+}
+
+fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, Vec<usize>) {
+    let init_s = 50.0_f64;
+    let last_s = 50.0_f64;
+    let vec_omega: Vec<f64> = (0..n_pts)
+        .map(|i| {
+            let t = i as f64 / (n_pts - 1) as f64;
+            init_s + t * (last_s - init_s)
+        })
+        .collect();
+
+    let init_lambda = 2.0_f64;
+    let last_lambda = 2.0_f64;
+    let vec_gamma: Vec<f64> = (0..n_pts)
+        .map(|i| {
+            let t = i as f64 / (n_pts - 1) as f64;
+            init_lambda + t * (last_lambda - init_lambda)
+        })
+        .collect();
+
+    let init_num_trajectories = 100_usize;
+    let last_num_trajectories = 100_usize;
+    let vec_num_trajectories: Vec<usize> = (0..n_pts)
+        .map(|i| {
+            let t = i as f64 / (n_pts - 1) as f64;
+            (init_num_trajectories as f64 + t * (last_num_trajectories - init_num_trajectories) as f64) as usize
+        })
+        .collect();
+
+    let init_m = 5_usize;
+    let last_m = 5_usize;
+    let vec_m: Vec<usize> = (0..n_pts)
+        .map(|i| {
+            let t = i as f64 / (n_pts - 1) as f64;
+            (init_m as f64 + t * (last_m - init_m) as f64) as usize
+        })
+        .collect();
+
+    (vec_omega, vec_gamma, vec_num_trajectories, vec_m)
+}
+
+
+fn main() -> Result<(), Box<dyn std::error::Error>>{
+    // Fixed simulation parameters
+    let dt: f64 = 0.001;
+    let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
+    let omega_c: f64 = 0.01; // Frequency scale
+    let beta: f64 = 0.1 / omega_c; // Inverse temperature
+    let betawc = beta * omega_c;
+    let gamma_z = 1. ;// 1./1000.*omega_c;
+    let nb = 1./(betawc.exp() - 1.);
+    
+    let n_pts = 2_usize;
+
+    // Generate parameter vectors
+    let (vec_s, vec_lambda, vec_num_trajectories, vec_m) = generate_parameter_vectors(n_pts);
+
+    println!("Running simulations with S: {:?}, lambda: {:?}, n_traj: {:?} and M: {:?}", vec_s, vec_lambda, vec_num_trajectories, vec_m);
+
+    // Pre-allocate result vectors
+    let mut counts_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
+    let mut bin_width_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut num_ticks_set: Vec<usize> = Vec::with_capacity(n_pts);
+    let mut entropys_tick_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut exp_entropy_tick_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut exp_entropy_mar_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut accuracy_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut accuracy_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut accuracy_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut resolution_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut resolution_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut resolution_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    let mut activity_tick_set: Vec<f64> = Vec::with_capacity(n_pts);
+
+    // Run simulations
+    for (((&s, &lambda), &num_trajectories), &m) in vec_s.iter().zip(vec_lambda.iter()).zip(vec_num_trajectories.iter()).zip(vec_m.iter()) 
+    {
+        let gamma_p: f64 = gamma_z/s * nb;
+        let gamma_m: f64 = gamma_z/s * ( nb + 1.);
+
+        let config = SimulationConfig::new(dt, total_time, omega_c, beta, gamma_p, gamma_m, lambda, s, num_trajectories, m);
+
+        let results = run_quantum_simulation(&config)?;
+
+        // Store results
+        counts_set.push(results.counts);
+        bin_width_set.push(results.bin_width);
+        num_ticks_set .push(results.num_ticks);
+        entropys_tick_set.push(results.entropy_tick);
+        exp_entropy_tick_set.push(results.exp_entropy_tick);
+        exp_entropy_mar_set.push(results.exp_entropy_mar);
+        accuracy_n_set.push(results.accuracy_n);
+        accuracy_k_set.push(results.accuracy_k);
+        accuracy_q_set.push(results.accuracy_q);
+        resolution_n_set.push(results.resolution_n);
+        resolution_k_set.push(results.resolution_k);
+        resolution_q_set.push(results.resolution_q);
+        activity_tick_set.push(results.activity_tick);
+    }
+
+
+
+
     
 
     Ok(())
