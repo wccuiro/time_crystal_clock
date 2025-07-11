@@ -824,7 +824,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
 fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, Vec<usize>) {
     let init_s = 50.0_f64;
     let last_s = 50.0_f64;
-    let vec_omega: Vec<f64> = (0..n_pts)
+    let vec_s: Vec<f64> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
             init_s + t * (last_s - init_s)
@@ -833,14 +833,14 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
 
     let init_lambda = 2.0_f64;
     let last_lambda = 2.0_f64;
-    let vec_gamma: Vec<f64> = (0..n_pts)
+    let vec_lambda: Vec<f64> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
             init_lambda + t * (last_lambda - init_lambda)
         })
         .collect();
 
-    let init_num_trajectories = 1000_usize;
+    let init_num_trajectories = 100_usize;
     let last_num_trajectories = 1000_usize;
     let vec_num_trajectories: Vec<usize> = (0..n_pts)
         .map(|i| {
@@ -849,8 +849,8 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         })
         .collect();
 
-    let init_m = 355_usize;
-    let last_m = 355_usize;
+    let init_m = 5_usize;
+    let last_m = 5_usize;
     let vec_m: Vec<usize> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
@@ -858,21 +858,21 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         })
         .collect();
 
-    (vec_omega, vec_gamma, vec_num_trajectories, vec_m)
+    (vec_s, vec_lambda, vec_num_trajectories, vec_m)
 }
 
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
     let dt: f64 = 0.01;
-    let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
+    let total_time: f64 = 1000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 2. / omega_c; // Inverse temperature
+    let beta: f64 = 0.1 / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     
-    let n_pts = 2_usize;
+    let n_pts = 10_usize;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda, vec_num_trajectories, vec_m) = generate_parameter_vectors(n_pts);
@@ -947,8 +947,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         activity_tick_k_set.push(results.activity_tick_k);
         activity_tick_q_set.push(results.activity_tick_q);
     }
-
-    println!("{:?}", counts_n_set[0]);
+    println!("{:?}", exp_entropy_tick_k_set);
+    // println!("{:?}", counts_n_set[0]);
 
     println!("Simulation completed successfully!");
 
