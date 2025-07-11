@@ -491,6 +491,88 @@ fn plot_trajectory_avg(
     Ok(())
 }
 
+fn plot_multiple_histogram(
+    counts_val: &[Vec<f64>],
+    bin_width_val: &[f64],
+    total_time: f64,
+    filename_rj: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(
+        counts_val.len(),
+        bin_width_val.len(),
+        "counts_val and bin_width_val must have the same length"
+    );
+
+    // Compute global max_count across all histograms
+    let global_max = counts_val
+        .iter()
+        .flat_map(|counts| counts.iter())
+        .cloned()
+        .fold(0.0_f64, f64::max);
+
+    // Single drawing area
+    let root = BitMapBackend::new(filename_rj, (1600, 1200)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    // Build one chart spanning the full area
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Changing both", ("sans-serif", 40))
+        .margin(30)
+        .x_label_area_size(50)
+        .y_label_area_size(60)
+        .build_cartesian_2d(0.0..total_time, 0.0..global_max)?;
+
+    chart
+        .configure_mesh()
+        .x_desc("Time")
+        .y_desc("Count")
+        .draw()?;
+
+    // A palette of base colors (RGBColor refs)
+    let palette = [&RED, &BLUE, &GREEN, &MAGENTA, &CYAN];
+
+    for (idx, (counts, &bin_width)) in
+        counts_val.iter().zip(bin_width_val.iter()).enumerate()
+    {
+        // pick the base color for this series
+        let color = palette[idx % palette.len()];
+
+        // build a semi‑transparent ShapeStyle once
+        let bar_style = color.mix(0.6).filled();
+
+        // draw each bar with that style
+        for (i, &count) in counts.iter().enumerate() {
+            let x0 = i as f64 * bin_width;
+            let x1 = x0 + bin_width;
+            chart.draw_series(std::iter::once(
+                Rectangle::new([(x0, 0.0), (x1, count)], bar_style.clone()),
+            ))?;
+        }
+
+        // add a legend entry using the *same* style
+        chart
+            .draw_series(std::iter::once(Circle::new(
+                (total_time * 0.05, global_max * (0.95 - 0.05 * idx as f64)),
+                5,
+                bar_style.clone(),
+            )))?
+            .label(format!("alpha {}", idx))
+            .legend(move |(x, y)| {
+                Rectangle::new([(x, y - 5), (x + 10, y + 5)], bar_style.clone())
+            });
+    }
+
+    // then draw the legend box once at the end
+    chart
+        .configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .draw()?;
+
+    Ok(())
+}
+
+
 // Configuration struct to organize parameters
 #[derive(Debug, Clone)]
 struct SimulationConfig {
@@ -788,7 +870,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     
     // --- 6. Plot histogram ---
     let filename = format!("WTD-histogram__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
-    plot_histogram(&counts_n, bw_n, min, max, &filename)?;
+    // plot_histogram(&counts_n, bw_n, min, max, &filename)?;
 
     Ok(SimulationResults {
         counts_n: counts_n,
@@ -824,7 +906,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
 fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, Vec<usize>) {
     let init_s = 50.0_f64;
     let last_s = 50.0_f64;
-    let vec_s: Vec<f64> = (0..n_pts)
+    let vec_omega: Vec<f64> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
             init_s + t * (last_s - init_s)
@@ -833,14 +915,14 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
 
     let init_lambda = 2.0_f64;
     let last_lambda = 2.0_f64;
-    let vec_lambda: Vec<f64> = (0..n_pts)
+    let vec_gamma: Vec<f64> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
             init_lambda + t * (last_lambda - init_lambda)
         })
         .collect();
 
-    let init_num_trajectories = 100_usize;
+    let init_num_trajectories = 1000_usize;
     let last_num_trajectories = 1000_usize;
     let vec_num_trajectories: Vec<usize> = (0..n_pts)
         .map(|i| {
@@ -849,30 +931,32 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         })
         .collect();
 
-    let init_m = 5_usize;
-    let last_m = 5_usize;
-    let vec_m: Vec<usize> = (0..n_pts)
-        .map(|i| {
-            let t = i as f64 / (n_pts - 1) as f64;
-            (init_m as f64 + t * (last_m - init_m) as f64) as usize
-        })
-        .collect();
+    let init_m = 355_usize;
+    let last_m = 355_usize;
+    // let vec_m: Vec<usize> = (0..n_pts)
+    //     .map(|i| {
+    //         let t = i as f64 / (n_pts - 1) as f64;
+    //         (init_m as f64 + t * (last_m - init_m) as f64) as usize
+    //     })
+    //     .collect();
+    
+    let vec_m: Vec<usize> = vec![355, 650, 705, 1100];      // Values for figure A2
 
-    (vec_s, vec_lambda, vec_num_trajectories, vec_m)
+    (vec_omega, vec_gamma, vec_num_trajectories, vec_m)
 }
 
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
     let dt: f64 = 0.01;
-    let total_time: f64 = 1000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
+    let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 0.1 / omega_c; // Inverse temperature
+    let beta: f64 = 2. / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     
-    let n_pts = 10_usize;
+    let n_pts = 2_usize;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda, vec_num_trajectories, vec_m) = generate_parameter_vectors(n_pts);
@@ -947,8 +1031,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         activity_tick_k_set.push(results.activity_tick_k);
         activity_tick_q_set.push(results.activity_tick_q);
     }
-    println!("{:?}", exp_entropy_tick_k_set);
-    // println!("{:?}", counts_n_set[0]);
+
+    plot_multiple_histogram(&counts_n_set, &bin_width_n_set, total_time, "Prueba.png")?;
+
+    println!("{:?}", counts_n_set[0]);
 
     println!("Simulation completed successfully!");
 
