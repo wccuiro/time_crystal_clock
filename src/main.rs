@@ -520,7 +520,7 @@ fn plot_multiple_histogram(
         .margin(30)
         .x_label_area_size(50)
         .y_label_area_size(60)
-        .build_cartesian_2d(0.0..total_time, 0.0..global_max)?;
+        .build_cartesian_2d(0.0..250.0, 0.0..global_max)?;
 
     chart
         .configure_mesh()
@@ -572,6 +572,41 @@ fn plot_multiple_histogram(
     Ok(())
 }
 
+fn plot_entropy_vs_n_traj(
+    entropies_traj: Vec<f64>,
+    n_traj: Vec<usize>,
+    filename: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(entropies_traj.len(), n_traj.len());
+
+    // Set up the plot
+    let root = BitMapBackend::new(filename, (1600, 1200)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let x_range = *n_traj.iter().min().unwrap() as f64..*n_traj.iter().max().unwrap() as f64;
+    let y_range = entropies_traj
+        .iter()
+        .cloned()
+        .fold(f64::INFINITY..f64::NEG_INFINITY, |acc, v| {
+            acc.start.min(v)..acc.end.max(v)
+        });
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Transformed Entropy vs. Number of Trajectories", ("sans-serif", 30))
+        .margin(40)
+        .x_label_area_size(40)
+        .y_label_area_size(60)
+        .build_cartesian_2d(x_range.clone(), y_range.clone())?;
+
+    chart.configure_mesh().draw()?;
+
+    chart.draw_series(LineSeries::new(
+        n_traj.iter().zip(entropies_traj.iter()).map(|(x, y)| (*x as f64, *y)),
+        &RED,
+    ))?;
+
+    Ok(())
+}
 
 // Configuration struct to organize parameters
 #[derive(Debug, Clone)]
@@ -666,10 +701,14 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     
     // Create and configure progress bar for trajectories generation
     let pb_traj = ProgressBar::new(num_trajectories as u64);
+    let tpl = format!(
+        "Running RJ {}, {}, {}, {}: [{{bar:40.green/black}}] {{pos}}/{{len}} ({{eta}})",
+        config.s, config.lambda, num_trajectories, m
+    );
     pb_traj.set_style(
         ProgressStyle::default_bar()
-        .template("Running trajectories: [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-        .unwrap(),
+            .template(&tpl)
+            .unwrap(),
     );
     
     // 2) Phase 1: simulate in parallel, updating the bar
@@ -694,7 +733,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let pb_analyze = ProgressBar::new(trajectories.len() as u64);
     pb_analyze.set_style(
         ProgressStyle::default_bar()
-        .template("Analyzing: [{bar:40.green/white}] {pos}/{len} ({eta})")
+        .template("Analyzing: [{bar:40.magenta/black}] {pos}/{len} ({eta})")
         .unwrap(),
     );
     
@@ -922,7 +961,7 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         })
         .collect();
 
-    let init_num_trajectories = 1000_usize;
+    let init_num_trajectories = 100_usize;
     let last_num_trajectories = 1000_usize;
     let vec_num_trajectories: Vec<usize> = (0..n_pts)
         .map(|i| {
@@ -931,16 +970,16 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         })
         .collect();
 
-    let init_m = 355_usize;
-    let last_m = 355_usize;
-    // let vec_m: Vec<usize> = (0..n_pts)
-    //     .map(|i| {
-    //         let t = i as f64 / (n_pts - 1) as f64;
-    //         (init_m as f64 + t * (last_m - init_m) as f64) as usize
-    //     })
-    //     .collect();
+    let init_m = 5_usize;
+    let last_m = 5_usize;
+    let vec_m: Vec<usize> = (0..n_pts)
+        .map(|i| {
+            let t = i as f64 / (n_pts - 1) as f64;
+            (init_m as f64 + t * (last_m - init_m) as f64) as usize
+        })
+        .collect();
     
-    let vec_m: Vec<usize> = vec![355, 650, 705, 1100];      // Values for figure A2
+    // let vec_m: Vec<usize> = vec![355, 650, 705, 1100];      // Values for figure A2
 
     (vec_omega, vec_gamma, vec_num_trajectories, vec_m)
 }
@@ -951,12 +990,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let dt: f64 = 0.01;
     let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 2. / omega_c; // Inverse temperature
+    let beta: f64 = 0.1 / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     
-    let n_pts = 2_usize;
+    let n_pts = 20_usize;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda, vec_num_trajectories, vec_m) = generate_parameter_vectors(n_pts);
@@ -1032,9 +1071,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         activity_tick_q_set.push(results.activity_tick_q);
     }
 
-    plot_multiple_histogram(&counts_n_set, &bin_width_n_set, total_time, "Prueba.png")?;
+    // plot_multiple_histogram(&counts_n_set, &bin_width_n_set, total_time, "Prueba.png")?;
 
-    println!("{:?}", counts_n_set[0]);
+    plot_entropy_vs_n_traj(exp_entropy_tick_n_set, num_ticks_n_set, "entropy_vs_n_traj.png")?;
+
+    // println!("{:?}", num_ticks_n_set);
 
     println!("Simulation completed successfully!");
 
