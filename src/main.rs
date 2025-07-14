@@ -5,7 +5,7 @@ use num_complex::Complex64;
 use rand::Rng;
 
 use rayon::prelude::*;
-use plotters::prelude::*;
+// use plotters::prelude::*;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
@@ -491,122 +491,122 @@ fn counts_per_bin(
 //     Ok(())
 // }
 
-fn plot_multiple_histogram(
-    counts_val: &[Vec<f64>],
-    bin_width_val: &[f64],
-    total_time: f64,
-    filename_rj: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    assert_eq!(
-        counts_val.len(),
-        bin_width_val.len(),
-        "counts_val and bin_width_val must have the same length"
-    );
+// fn plot_multiple_histogram(
+//     counts_val: &[Vec<f64>],
+//     bin_width_val: &[f64],
+//     total_time: f64,
+//     filename_rj: &str,
+// ) -> Result<(), Box<dyn std::error::Error>> {
+//     assert_eq!(
+//         counts_val.len(),
+//         bin_width_val.len(),
+//         "counts_val and bin_width_val must have the same length"
+//     );
 
-    // Compute global max_count across all histograms
-    let global_max = counts_val
-        .iter()
-        .flat_map(|counts| counts.iter())
-        .cloned()
-        .fold(0.0_f64, f64::max);
+//     // Compute global max_count across all histograms
+//     let global_max = counts_val
+//         .iter()
+//         .flat_map(|counts| counts.iter())
+//         .cloned()
+//         .fold(0.0_f64, f64::max);
 
-    // Single drawing area
-    let root = BitMapBackend::new(filename_rj, (1600, 1200)).into_drawing_area();
-    root.fill(&WHITE)?;
+//     // Single drawing area
+//     let root = BitMapBackend::new(filename_rj, (1600, 1200)).into_drawing_area();
+//     root.fill(&WHITE)?;
 
-    // Build one chart spanning the full area
-    let mut chart = ChartBuilder::on(&root)
-        .caption("Changing both", ("sans-serif", 40))
-        .margin(30)
-        .x_label_area_size(50)
-        .y_label_area_size(60)
-        .build_cartesian_2d(0.0..250.0, 0.0..global_max)?;
+//     // Build one chart spanning the full area
+//     let mut chart = ChartBuilder::on(&root)
+//         .caption("Changing both", ("sans-serif", 40))
+//         .margin(30)
+//         .x_label_area_size(50)
+//         .y_label_area_size(60)
+//         .build_cartesian_2d(0.0..250.0, 0.0..global_max)?;
 
-    chart
-        .configure_mesh()
-        .x_desc("Time")
-        .y_desc("Count")
-        .draw()?;
+//     chart
+//         .configure_mesh()
+//         .x_desc("Time")
+//         .y_desc("Count")
+//         .draw()?;
 
-    // A palette of base colors (RGBColor refs)
-    let palette = [&RED, &BLUE, &GREEN, &MAGENTA, &CYAN];
+//     // A palette of base colors (RGBColor refs)
+//     let palette = [&RED, &BLUE, &GREEN, &MAGENTA, &CYAN];
 
-    for (idx, (counts, &bin_width)) in
-        counts_val.iter().zip(bin_width_val.iter()).enumerate()
-    {
-        // pick the base color for this series
-        let color = palette[idx % palette.len()];
+//     for (idx, (counts, &bin_width)) in
+//         counts_val.iter().zip(bin_width_val.iter()).enumerate()
+//     {
+//         // pick the base color for this series
+//         let color = palette[idx % palette.len()];
 
-        // build a semi‑transparent ShapeStyle once
-        let bar_style = color.mix(0.6).filled();
+//         // build a semi‑transparent ShapeStyle once
+//         let bar_style = color.mix(0.6).filled();
 
-        // draw each bar with that style
-        for (i, &count) in counts.iter().enumerate() {
-            let x0 = i as f64 * bin_width;
-            let x1 = x0 + bin_width;
-            chart.draw_series(std::iter::once(
-                Rectangle::new([(x0, 0.0), (x1, count)], bar_style.clone()),
-            ))?;
-        }
+//         // draw each bar with that style
+//         for (i, &count) in counts.iter().enumerate() {
+//             let x0 = i as f64 * bin_width;
+//             let x1 = x0 + bin_width;
+//             chart.draw_series(std::iter::once(
+//                 Rectangle::new([(x0, 0.0), (x1, count)], bar_style.clone()),
+//             ))?;
+//         }
 
-        // add a legend entry using the *same* style
-        chart
-            .draw_series(std::iter::once(Circle::new(
-                (total_time * 0.05, global_max * (0.95 - 0.05 * idx as f64)),
-                5,
-                bar_style.clone(),
-            )))?
-            .label(format!("alpha {}", idx))
-            .legend(move |(x, y)| {
-                Rectangle::new([(x, y - 5), (x + 10, y + 5)], bar_style.clone())
-            });
-    }
+//         // add a legend entry using the *same* style
+//         chart
+//             .draw_series(std::iter::once(Circle::new(
+//                 (total_time * 0.05, global_max * (0.95 - 0.05 * idx as f64)),
+//                 5,
+//                 bar_style.clone(),
+//             )))?
+//             .label(format!("alpha {}", idx))
+//             .legend(move |(x, y)| {
+//                 Rectangle::new([(x, y - 5), (x + 10, y + 5)], bar_style.clone())
+//             });
+//     }
 
-    // then draw the legend box once at the end
-    chart
-        .configure_series_labels()
-        .background_style(&WHITE.mix(0.8))
-        .border_style(&BLACK)
-        .draw()?;
+//     // then draw the legend box once at the end
+//     chart
+//         .configure_series_labels()
+//         .background_style(&WHITE.mix(0.8))
+//         .border_style(&BLACK)
+//         .draw()?;
 
-    Ok(())
-}
+//     Ok(())
+// }
 
-fn plot_entropy_vs_n_traj(
-    entropies_traj: Vec<f64>,
-    n_traj: Vec<usize>,
-    filename: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    assert_eq!(entropies_traj.len(), n_traj.len());
+// fn plot_entropy_vs_n_traj(
+//     entropies_traj: Vec<f64>,
+//     n_traj: Vec<usize>,
+//     filename: &str,
+// ) -> Result<(), Box<dyn std::error::Error>> {
+//     assert_eq!(entropies_traj.len(), n_traj.len());
 
-    // Set up the plot
-    let root = BitMapBackend::new(filename, (1600, 1200)).into_drawing_area();
-    root.fill(&WHITE)?;
+//     // Set up the plot
+//     let root = BitMapBackend::new(filename, (1600, 1200)).into_drawing_area();
+//     root.fill(&WHITE)?;
 
-    let x_range = *n_traj.iter().min().unwrap() as f64..*n_traj.iter().max().unwrap() as f64;
-    let y_range = entropies_traj
-        .iter()
-        .cloned()
-        .fold(f64::INFINITY..f64::NEG_INFINITY, |acc, v| {
-            acc.start.min(v)..acc.end.max(v)
-        });
+//     let x_range = *n_traj.iter().min().unwrap() as f64..*n_traj.iter().max().unwrap() as f64;
+//     let y_range = entropies_traj
+//         .iter()
+//         .cloned()
+//         .fold(f64::INFINITY..f64::NEG_INFINITY, |acc, v| {
+//             acc.start.min(v)..acc.end.max(v)
+//         });
 
-    let mut chart = ChartBuilder::on(&root)
-        .caption("Transformed Entropy vs. Number of Trajectories", ("sans-serif", 30))
-        .margin(40)
-        .x_label_area_size(40)
-        .y_label_area_size(60)
-        .build_cartesian_2d(x_range.clone(), y_range.clone())?;
+//     let mut chart = ChartBuilder::on(&root)
+//         .caption("Transformed Entropy vs. Number of Trajectories", ("sans-serif", 30))
+//         .margin(40)
+//         .x_label_area_size(40)
+//         .y_label_area_size(60)
+//         .build_cartesian_2d(x_range.clone(), y_range.clone())?;
 
-    chart.configure_mesh().draw()?;
+//     chart.configure_mesh().draw()?;
 
-    chart.draw_series(LineSeries::new(
-        n_traj.iter().zip(entropies_traj.iter()).map(|(x, y)| (*x as f64, *y)),
-        &RED,
-    ))?;
+//     chart.draw_series(LineSeries::new(
+//         n_traj.iter().zip(entropies_traj.iter()).map(|(x, y)| (*x as f64, *y)),
+//         &RED,
+//     ))?;
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 // Configuration struct to organize parameters
 #[derive(Debug, Clone)]
@@ -1073,7 +1073,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     // plot_multiple_histogram(&counts_n_set, &bin_width_n_set, total_time, "Prueba.png")?;
 
-    plot_entropy_vs_n_traj(exp_entropy_tick_n_set, num_ticks_n_set, "entropy_vs_n_traj.png")?;
+    println!("{:?},{:?}", exp_entropy_tick_n_set, num_ticks_n_set);
+    // plot_entropy_vs_n_traj(exp_entropy_tick_n_set, num_ticks_n_set, "entropy_vs_n_traj.png")?;
 
     // println!("{:?}", num_ticks_n_set);
 
