@@ -7,7 +7,7 @@ use rand::Rng;
 use rayon::prelude::*;
 // use plotters::prelude::*;
 
-use indicatif::{ProgressBar, ProgressStyle};
+// use indicatif::{ProgressBar, ProgressStyle};
 
 fn create_jump_operators(lambda: f64, s: f64) -> (Array2<Complex64>, Array2<Complex64>) {
 
@@ -700,42 +700,35 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
     
     // Create and configure progress bar for trajectories generation
-    let pb_traj = ProgressBar::new(num_trajectories as u64);
-    let tpl = format!(
-        "Running RJ {}, {}, {}, {}: [{{bar:40.green/black}}] {{pos}}/{{len}} ({{eta}})",
-        config.s, config.lambda, num_trajectories, m
-    );
-    pb_traj.set_style(
-        ProgressStyle::default_bar()
-            .template(&tpl)
-            .unwrap(),
-    );
+    // let pb_traj = ProgressBar::new(num_trajectories as u64);
+    // let tpl = format!(
+    //     "Running RJ {}, {}, {}, {}: [{{bar:40.green/black}}] {{pos}}/{{len}} ({{eta}})",
+    //     config.s, config.lambda, num_trajectories, m
+    // );
+    // pb_traj.set_style(
+    //     ProgressStyle::default_bar()
+    //         .template(&tpl)
+    //         .unwrap(),
+    // );
     
     // 2) Phase 1: simulate in parallel, updating the bar
-    let trajectories: Vec<(Array1<f64>, Array1<usize>, Vec<Array1<Complex64>>)> = (0..num_trajectories)
-    .into_par_iter()
-    .map_init(
-        // `pb_traj.clone()` here is cheap & thread‑safe
-        || pb_traj.clone(),
-        |pb, _| {
-            let traj = simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time);
-            pb.inc(1);
-            traj
-        },
-    )
-    .filter(|(times, _, _)| times.len() >= 2)
-    .collect();
+    let trajectories: Vec<(Array1<f64>, Array1<usize>, Vec<Array1<Complex64>>)> = 
+        (0..num_trajectories)
+            .into_par_iter()
+            .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time))
+            .filter(|(times, _, _)| times.len() >= 2)
+            .collect();
     
-    pb_traj.finish_with_message("Simulation complete.");
+    // pb_traj.finish_with_message("Simulation complete.");
     
     
-    // Create and configure progress bar for data analysis
-    let pb_analyze = ProgressBar::new(trajectories.len() as u64);
-    pb_analyze.set_style(
-        ProgressStyle::default_bar()
-        .template("Analyzing: [{bar:40.magenta/black}] {pos}/{len} ({eta})")
-        .unwrap(),
-    );
+    // // Create and configure progress bar for data analysis
+    // let pb_analyze = ProgressBar::new(trajectories.len() as u64);
+    // pb_analyze.set_style(
+    //     ProgressStyle::default_bar()
+    //     .template("Analyzing: [{bar:40.magenta/black}] {pos}/{len} ({eta})")
+    //     .unwrap(),
+    // );
     
 
     // 2) Phase 2: analyze each trajectory in parallel with progress updates
@@ -744,67 +737,57 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let a_plus: i32 = 0; // Weight for absorption
     let results_n: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = 
         trajectories
-            .par_iter()                    // iterate by reference, so `trajectories` is not consumed
-            .map_init(
-                || pb_analyze.clone(),     // each thread gets its own progress bar clone
-                |pb, traj| {
-                    let (times, types, wfs) = traj;
-                    let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
-                    pb.inc(1);
-                    if aux_ticks.len() > 1 {
-                        Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
-                    } else {
-                        None
-                    }
-                },
-            )
+            .par_iter()
+            .map(|traj| {
+                let (times, types, wfs) = traj;
+                let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
+                if aux_ticks.len() > 1 {
+                    Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
+                } else {
+                    None
+                }
+            })
             .filter_map(|res| res)
             .collect();
+
 
     // Considering dynamical activity
     let a_minus: i32 = 1; // Weight for emission
     let a_plus: i32 = 1; // Weight for absorption
     let results_k: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = 
         trajectories
-            .par_iter()                    // iterate by reference, so `trajectories` is not consumed
-            .map_init(
-                || pb_analyze.clone(),     // each thread gets its own progress bar clone
-                |pb, traj| {
-                    let (times, types, wfs) = traj;
-                    let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
-                    pb.inc(1);
-                    if aux_ticks.len() > 1 {
-                        Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
-                    } else {
-                        None
-                    }
-                },
-            )
+            .par_iter()
+            .map(|traj| {
+                let (times, types, wfs) = traj;
+                let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
+                if aux_ticks.len() > 1 {
+                    Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
+                } else {
+                    None
+                }
+            })
             .filter_map(|res| res)
-            .collect();    
+            .collect();
+
 
     // Considering dissipated heat current
     let a_minus: i32 = 1; // Weight for emission
     let a_plus: i32 = -1; // Weight for absorption
     let results_q: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = trajectories
         .into_par_iter()
-        .map_init(
-            // `pb_analyze.clone()` is cheap & thread‑safe
-            || pb_analyze.clone(),
-            |pb, (times, types, wfs)| {
-                let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
-                pb.inc(1);
-                if aux_ticks.len() > 1 {
-                    Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
-                } else {
-                    None
-                }
-            },
-        )
+        .map(|(times, types, wfs)| {
+            let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
+            if aux_ticks.len() > 1 {
+                Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
+            } else {
+                None
+            }
+        })
         .filter_map(|res| res)
         .collect();
 
-    pb_analyze.finish_with_message("Analysis complete.");
+
+    // pb_analyze.finish_with_message("Analysis complete.");
 
     // Combine all results collective emissons
     let mut waits_n = Vec::new();        // flattened for histogram

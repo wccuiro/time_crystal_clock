@@ -11,9 +11,9 @@ ndarray = "0.15"
 num-complex = "0.4"
 rand = "0.8"
 rayon = "1.7"
-plotters = "0.3"
+# plotters = "0.3"
 statrs = "0.16"
-indicatif = "0.17"      # for progress bars
+# indicatif = "0.17"      # for progress bars
 
 
 [profile.release]
