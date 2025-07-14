@@ -1,5 +1,5 @@
 use ndarray::{array, Array1, Array2, s};
-use ndarray::linalg::kron;
+// use ndarray::linalg::kron;
 
 use num_complex::Complex64;
 use rand::Rng;
@@ -198,59 +198,59 @@ fn simulate_trajectory(
 }
 
 
-fn lindblad_simulation(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64, total_time: f64, dt: f64) -> Vec<f64> {
-    let max_steps = (total_time / dt).ceil() as usize;
-    let mut sz_exp = Vec::with_capacity(max_steps);
+// fn lindblad_simulation(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64, total_time: f64, dt: f64) -> Vec<f64> {
+//     let max_steps = (total_time / dt).ceil() as usize;
+//     let mut sz_exp = Vec::with_capacity(max_steps);
 
-    let (l_plus, l_minus) = create_jump_operators(lambda, s);
-
-
-    // let sigma_pm = sigma_plus.dot(&sigma_minus);
-    let identity = array![
-        [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)],
-        [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)]
-    ];
-
-    let v_identity = array![
-        Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0),
-        Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)
-    ];
-
-    let v_sigma_z = array![
-        [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)],
-        [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)],
-        [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(-1.0, 0.0), Complex64::new(0.0, 0.0)],
-        [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(-1.0, 0.0)]
-    ];
+//     let (l_plus, l_minus) = create_jump_operators(lambda, s);
 
 
-    let term2_m = kron(&l_minus, &l_plus.t());
-    let term2_p = kron(&l_plus, &l_minus.t());
+//     // let sigma_pm = sigma_plus.dot(&sigma_minus);
+//     let identity = array![
+//         [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)],
+//         [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)]
+//     ];
 
-    let left_p = l_minus.dot(&l_plus);
-    let right_p = l_plus.t().dot(&l_minus.t());
+//     let v_identity = array![
+//         Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0),
+//         Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)
+//     ];
 
-    let left_m = l_plus.dot(&l_minus);
-    let right_m = l_minus.t().dot(&l_plus.t());
+//     let v_sigma_z = array![
+//         [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)],
+//         [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)],
+//         [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(-1.0, 0.0), Complex64::new(0.0, 0.0)],
+//         [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(-1.0, 0.0)]
+//     ];
 
-    let term3_m = (kron(&left_m, &identity) + kron(&identity, &right_m)).mapv(|e| e * 0.5); 
-    let term3_p = (kron(&left_p, &identity) + kron(&identity, &right_p)).mapv(|e| e * 0.5);
 
-    let s_l = (&term2_m - &term3_m).mapv(|e| e * gamma_m / s) + (&term2_p - &term3_p).mapv(|e| e * gamma_p / s);
+//     let term2_m = kron(&l_minus, &l_plus.t());
+//     let term2_p = kron(&l_plus, &l_minus.t());
 
-    let (rho,_,_,_) = steady_state(s, lambda, gamma_p, gamma_m);
-    let mut v_rho: Array1<Complex64> = rho.iter().cloned().collect();
+//     let left_p = l_minus.dot(&l_plus);
+//     let right_p = l_plus.t().dot(&l_minus.t());
 
-    for _ in 0..max_steps {
-        v_rho = &v_rho + (&s_l.dot(&v_rho)).mapv(|e| e * dt);
-        v_rho = v_rho.mapv(|e| e / v_identity.dot(&v_rho).re);
+//     let left_m = l_plus.dot(&l_minus);
+//     let right_m = l_minus.t().dot(&l_plus.t());
 
-        let szz = v_identity.dot(&v_sigma_z.dot(&v_rho)).re;
-        sz_exp.push(szz);
-    }
+//     let term3_m = (kron(&left_m, &identity) + kron(&identity, &right_m)).mapv(|e| e * 0.5); 
+//     let term3_p = (kron(&left_p, &identity) + kron(&identity, &right_p)).mapv(|e| e * 0.5);
 
-    sz_exp
-}
+//     let s_l = (&term2_m - &term3_m).mapv(|e| e * gamma_m / s) + (&term2_p - &term3_p).mapv(|e| e * gamma_p / s);
+
+//     let (rho,_,_,_) = steady_state(s, lambda, gamma_p, gamma_m);
+//     let mut v_rho: Array1<Complex64> = rho.iter().cloned().collect();
+
+//     for _ in 0..max_steps {
+//         v_rho = &v_rho + (&s_l.dot(&v_rho)).mapv(|e| e * dt);
+//         v_rho = v_rho.mapv(|e| e / v_identity.dot(&v_rho).re);
+
+//         let szz = v_identity.dot(&v_sigma_z.dot(&v_rho)).re;
+//         sz_exp.push(szz);
+//     }
+
+//     sz_exp
+// }
 
 fn compute_tick_times(
     types: &Array1<usize>,
@@ -396,100 +396,100 @@ fn counts_per_bin(
 }
 
 
-fn plot_histogram(
-    counts: &Vec<f64>,
-    bin_width: f64,
-    min: f64,
-    max: f64,
-    filename: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+// fn plot_histogram(
+//     counts: &Vec<f64>,
+//     bin_width: f64,
+//     min: f64,
+//     max: f64,
+//     filename: &str,
+// ) -> Result<(), Box<dyn std::error::Error>> {
 
-    // Set up drawing area
-    let root = BitMapBackend::new(filename, (1600, 1200)).into_drawing_area();
-    root.fill(&WHITE)?;
+//     // Set up drawing area
+//     let root = BitMapBackend::new(filename, (1600, 1200)).into_drawing_area();
+//     root.fill(&WHITE)?;
 
-    let max_count = counts
-        .iter()
-        .cloned()
-        .fold(0.0, f64::max);
-
-
-    let mut chart = ChartBuilder::on(&root)
-        .caption("Histogram", ("FiraCode Nerd Font", 40))
-        .margin(30)
-        .x_label_area_size(40)
-        .y_label_area_size(40)
-        .build_cartesian_2d(min..max, 0.0..max_count)?;
-
-    chart.configure_mesh()
-        .x_desc("Value")
-        .y_desc("Count")
-        .draw()?;
-
-    // Draw bars
-    for (i, &count) in counts.iter().enumerate() {
-        let x0 = min + i as f64 * bin_width;
-        let x1 = x0 + bin_width;
-        chart.draw_series(
-            std::iter::once(Rectangle::new(
-                [(x0, 0.), (x1, count)],
-                BLUE.filled(),
-            )),
-        )?;
-    }
-
-    Ok(())
-}
-
-fn plot_trajectory_avg(
-    // avg_cm: Array1<f64>,
-    // avg_rj: Array1<f64>,
-    lindblad_avg: Vec<f64>,
-    steps: usize,
-    filename: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-
-    let root = BitMapBackend::new(&filename, (1600, 1200)).into_drawing_area();
-    root.fill(&WHITE)?;
-
-    let min = lindblad_avg
-        .iter()
-        .cloned()
-        .fold(f64::INFINITY, f64::min);
-
-    let max = lindblad_avg
-        .iter()
-        .cloned()
-        .fold(f64::NEG_INFINITY, f64::max);
-
-    let mut chart = ChartBuilder::on(&root)
-        .caption("Average <σ_z> trajectory", ("FiraCode Nerd Font", 30))
-        .margin(100)
-        .x_label_area_size(40)
-        .y_label_area_size(40)
-        .build_cartesian_2d(0..steps, (1.1 * min)..(1.1* max))?;
-
-    chart.configure_mesh()
-        .x_desc("Time steps")
-        .y_desc("<σ_z>")
-        .label_style(("FiraCode Nerd Font", 30).into_font())
-        .draw()?;
+//     let max_count = counts
+//         .iter()
+//         .cloned()
+//         .fold(0.0, f64::max);
 
 
-    chart.draw_series(LineSeries::new(
-        lindblad_avg.iter().enumerate().map(|(x, y)| (x, *y)),
-        &MAGENTA,
-    ))?
-    .label("Avg")
-    .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &MAGENTA));
+//     let mut chart = ChartBuilder::on(&root)
+//         .caption("Histogram", ("FiraCode Nerd Font", 40))
+//         .margin(30)
+//         .x_label_area_size(40)
+//         .y_label_area_size(40)
+//         .build_cartesian_2d(min..max, 0.0..max_count)?;
 
-    chart.configure_series_labels()
-    .position(SeriesLabelPosition::UpperRight)
-    .label_font(("FiraCode Nerd Font", 40).into_font())
-    .draw()?;
+//     chart.configure_mesh()
+//         .x_desc("Value")
+//         .y_desc("Count")
+//         .draw()?;
 
-    Ok(())
-}
+//     // Draw bars
+//     for (i, &count) in counts.iter().enumerate() {
+//         let x0 = min + i as f64 * bin_width;
+//         let x1 = x0 + bin_width;
+//         chart.draw_series(
+//             std::iter::once(Rectangle::new(
+//                 [(x0, 0.), (x1, count)],
+//                 BLUE.filled(),
+//             )),
+//         )?;
+//     }
+
+//     Ok(())
+// }
+
+// fn plot_trajectory_avg(
+//     // avg_cm: Array1<f64>,
+//     // avg_rj: Array1<f64>,
+//     lindblad_avg: Vec<f64>,
+//     steps: usize,
+//     filename: &str,
+// ) -> Result<(), Box<dyn std::error::Error>> {
+
+//     let root = BitMapBackend::new(&filename, (1600, 1200)).into_drawing_area();
+//     root.fill(&WHITE)?;
+
+//     let min = lindblad_avg
+//         .iter()
+//         .cloned()
+//         .fold(f64::INFINITY, f64::min);
+
+//     let max = lindblad_avg
+//         .iter()
+//         .cloned()
+//         .fold(f64::NEG_INFINITY, f64::max);
+
+//     let mut chart = ChartBuilder::on(&root)
+//         .caption("Average <σ_z> trajectory", ("FiraCode Nerd Font", 30))
+//         .margin(100)
+//         .x_label_area_size(40)
+//         .y_label_area_size(40)
+//         .build_cartesian_2d(0..steps, (1.1 * min)..(1.1* max))?;
+
+//     chart.configure_mesh()
+//         .x_desc("Time steps")
+//         .y_desc("<σ_z>")
+//         .label_style(("FiraCode Nerd Font", 30).into_font())
+//         .draw()?;
+
+
+//     chart.draw_series(LineSeries::new(
+//         lindblad_avg.iter().enumerate().map(|(x, y)| (x, *y)),
+//         &MAGENTA,
+//     ))?
+//     .label("Avg")
+//     .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &MAGENTA));
+
+//     chart.configure_series_labels()
+//     .position(SeriesLabelPosition::UpperRight)
+//     .label_font(("FiraCode Nerd Font", 40).into_font())
+//     .draw()?;
+
+//     Ok(())
+// }
 
 fn plot_multiple_histogram(
     counts_val: &[Vec<f64>],
@@ -691,11 +691,11 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let m = config.m;
     
     
-    let rho_sz = lindblad_simulation(s, lambda, gamma_p, gamma_m, total_time, dt);
+    // let rho_sz = lindblad_simulation(s, lambda, gamma_p, gamma_m, total_time, dt);
     // println!("{:?}", rho_norm);
     
-    let filename_traj = format!("Avg_trajectory__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
-    plot_trajectory_avg(rho_sz, steps, &filename_traj)?;
+    // let filename_traj = format!("Avg_trajectory__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
+    // plot_trajectory_avg(rho_sz, steps, &filename_traj)?;
     
     let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
     
@@ -908,7 +908,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let counts_q = counts_per_bin(&sorted_waits_q, bw_n, min, max);
     
     // --- 6. Plot histogram ---
-    let filename = format!("WTD-histogram__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
+    // let filename = format!("WTD-histogram__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
     // plot_histogram(&counts_n, bw_n, min, max, &filename)?;
 
     Ok(SimulationResults {
