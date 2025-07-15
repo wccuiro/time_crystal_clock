@@ -141,9 +141,9 @@ fn simulate_trajectory(
     let mut last_tick_k = 0.0;
     let mut last_tick_q = 0.0;
 
-    let mut activity_tick_n_set = Vec::new();
-    let mut activity_tick_k_set = Vec::new();
-    let mut activity_tick_q_set = Vec::new();
+    let mut activity_tick_n = Vec::new();
+    let mut activity_tick_k = Vec::new();
+    let mut activity_tick_q = Vec::new();
 
     let mut last_activity_n = 0;
     let mut last_activity_k = 0;
@@ -152,9 +152,9 @@ fn simulate_trajectory(
     let mut inst_n_m = 0; 
     let mut inst_n_p = 0;
 
-    let mut entropys_tick_n_set = Vec::new();
-    let mut entropys_tick_k_set = Vec::new();
-    let mut entropys_tick_q_set = Vec::new();
+    let mut entropys_tick_n = Vec::new();
+    let mut entropys_tick_k = Vec::new();
+    let mut entropys_tick_q = Vec::new();
 
     let mut inst_s_n = inst_entropy(&pi , &psi, inst_n_m, inst_n_p, betawc);
     let mut inst_s_k = inst_s_n;
@@ -218,10 +218,10 @@ fn simulate_trajectory(
             ticks_n.push(i as f64 * dt - last_tick_n);
             last_tick_n = i as f64 * dt;
 
-            entropys_tick_n_set.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_n);
+            entropys_tick_n.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_n);
             inst_s_n = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
 
-            activity_tick_n_set.push((inst_n_m + inst_n_p) - last_activity_n);
+            activity_tick_n.push((inst_n_m + inst_n_p) - last_activity_n);
             last_activity_n = inst_n_m + inst_n_p;
 
         } 
@@ -230,10 +230,10 @@ fn simulate_trajectory(
             ticks_k.push(i as f64 * dt - last_tick_k);
             last_tick_k = i as f64 * dt;
 
-            entropys_tick_k_set.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_k);
+            entropys_tick_k.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_k);
             inst_s_k = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
 
-            activity_tick_k_set.push((inst_n_m + inst_n_p) - last_activity_k);
+            activity_tick_k.push((inst_n_m + inst_n_p) - last_activity_k);
             last_activity_k = inst_n_m + inst_n_p;            
 
         }
@@ -242,10 +242,10 @@ fn simulate_trajectory(
             ticks_q.push(i as f64 * dt - last_tick_q);
             last_tick_q = i as f64 * dt;
 
-            entropys_tick_q_set.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_q);
+            entropys_tick_q.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_q);
             inst_s_q = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
 
-            activity_tick_q_set.push((inst_n_m + inst_n_p) - last_activity_q);
+            activity_tick_q.push((inst_n_m + inst_n_p) - last_activity_q);
             last_activity_q = inst_n_m + inst_n_p;
 
         }
@@ -255,114 +255,29 @@ fn simulate_trajectory(
 
     }
 
-    let ticks_n: Array1<f64> = Array1::from(ticks_n);
-    let ticks_k: Array1<f64> = Array1::from(ticks_k);
-    let ticks_q: Array1<f64> = Array1::from(ticks_q);
+    let ticks_n: Array1<f64> = Array1::from(ticks_n[1..].to_vec());
+    let ticks_k: Array1<f64> = Array1::from(ticks_k[1..].to_vec());
+    let ticks_q: Array1<f64> = Array1::from(ticks_q[1..].to_vec());
 
-    let activity_tick_n_set: Array1<usize> = Array1::from(activity_tick_n_set);
-    let activity_tick_k_set: Array1<usize> = Array1::from(activity_tick_k_set);
-    let activity_tick_q_set: Array1<usize> = Array1::from(activity_tick_q_set);
+    let activity_tick_n: Array1<usize> = Array1::from(activity_tick_n[1..].to_vec());
+    let activity_tick_k: Array1<usize> = Array1::from(activity_tick_k[1..].to_vec());
+    let activity_tick_q: Array1<usize> = Array1::from(activity_tick_q[1..].to_vec());
     
-    let entropy_tick_n_set: Array1<f64> = Array1::from(entropys_tick_n_set[1..].to_vec());
-    let entropy_tick_k_set: Array1<f64> = Array1::from(entropys_tick_k_set[1..].to_vec());
-    let entropy_tick_q_set: Array1<f64> = Array1::from(entropys_tick_q_set[1..].to_vec());
+    let entropy_tick_n: Array1<f64> = Array1::from(entropys_tick_n[1..].to_vec());
+    let entropy_tick_k: Array1<f64> = Array1::from(entropys_tick_k[1..].to_vec());
+    let entropy_tick_q: Array1<f64> = Array1::from(entropys_tick_q[1..].to_vec());
     
-    let entropy_mar_n: f64 = entropys_tick_n_set[0];
-    let entropy_mar_k: f64 = entropys_tick_k_set[0];
-    let entropy_mar_q: f64 = entropys_tick_q_set[0];
+    let entropy_mar_n: f64 = entropys_tick_n[0];
+    let entropy_mar_k: f64 = entropys_tick_k[0];
+    let entropy_mar_q: f64 = entropys_tick_q[0];
 
 
     (ticks_n, ticks_k, ticks_q, 
-     activity_tick_n_set, activity_tick_k_set, activity_tick_q_set,
-     entropy_tick_n_set, entropy_tick_k_set, entropy_tick_q_set,
+     activity_tick_n, activity_tick_k, activity_tick_q,
+     entropy_tick_n, entropy_tick_k, entropy_tick_q,
      entropy_mar_n, entropy_mar_k, entropy_mar_q)
 }
 
-
-fn compute_tick_times(
-    types: &Array1<usize>,
-    a_minus: i32,
-    a_plus: i32,
-    m: usize,
-) -> Array1<usize> {
-    let mut n_acc: i32 = 0;
-    let mut aux_ticks = vec![];
-    let mut next_threshold = m;
-
-    for (i, &k) in types.iter().enumerate() {
-        if k == 1 {
-            n_acc += a_plus;
-        } else {
-            n_acc += a_minus;
-        }
-
-        if n_acc >= next_threshold as i32 {
-            aux_ticks.push(i);
-            next_threshold += m;
-        }
-    }
-
-    let aux_ticks: Array1<usize> = Array1::from(aux_ticks);
-    aux_ticks
-}
-
-fn analyze_ticks(
-    times: &Array1<f64>,
-    types: &Array1<usize>,
-    wfs: &Vec<Array1<Complex64>>,
-    aux_ticks: &Array1<usize>,
-    beta: f64,
-    omega_c: f64,
-    pi: &Array2<Complex64>,
-) -> (Vec<f64>, Vec<usize>, Vec<f64>) {
-    let mut waiting_times = Vec::new();
-    let mut activity_ticks = Vec::new();
-    let mut entropy_ticks = Vec::new();
-
-    let ticks = aux_ticks.as_slice().expect("aux_ticks must be contiguous");
-
-    for pair in ticks.windows(2) {
-        if pair.len() != 2 {
-            continue; // Skip incomplete pair
-        }
-        let i1 = pair[0];
-        let i2 = pair[1];
-
-        let t1 = times[i1];
-        let t2 = times[i2];
-
-        let slice_types = &types.slice(s![i1..i2]);
-        let n_plus = slice_types.iter().filter(|&&k| k == 1).count();
-        let n_minus = slice_types.iter().filter(|&&k| k == 0).count();
-
-        let q = omega_c * (n_minus as f64 - n_plus as f64);
-        let beta_q = beta * q;
-
-        let psi1 = &wfs[i1];
-        let psi2 = &wfs[i2];
-
-        let p1 = {
-            let inner = pi.dot(psi1);
-            let amp = psi1.mapv(|c| c.conj()).dot(&inner).re;
-            amp.clamp(1e-12, 1.0)
-        };
-        let p2 = {
-            let inner = pi.dot(psi2);
-            let amp = psi2.mapv(|c| c.conj()).dot(&inner).re;
-            amp.clamp(1e-12, 1.0)
-        };
-
-        let delta_spsi = p1.ln() - p2.ln();
-        let s_tick = delta_spsi + beta_q;
-
-        waiting_times.push(t2 - t1);
-        activity_ticks.push(i2 - i1);
-        entropy_ticks.push(s_tick);
-    }
-    
-
-    (waiting_times, activity_ticks, entropy_ticks)
-}
 
 
 fn bin_width(data: &[f64]) -> f64 {
@@ -505,101 +420,15 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let m = config.m;
     
     let betawc = beta * omega_c;
-    
-    // let rho_sz = lindblad_simulation(s, lambda, gamma_p, gamma_m, total_time, dt);
-    // println!("{:?}", rho_norm);
-    
-    // let filename_traj = format!("Avg_trajectory__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
-    // plot_trajectory_avg(rho_sz, steps, &filename_traj)?;
-    
-    let (pi, _, _, _) = steady_state(s, lambda, gamma_p, gamma_m);
-    
-    // Create and configure progress bar for trajectories generation
-    // let pb_traj = ProgressBar::new(num_trajectories as u64);
-    // let tpl = format!(
-    //     "Running RJ {}, {}, {}, {}: [{{bar:40.green/black}}] {{pos}}/{{len}} ({{eta}})",
-    //     config.s, config.lambda, num_trajectories, m
-    // );
-    // pb_traj.set_style(
-    //     ProgressStyle::default_bar()
-    //         .template(&tpl)
-    //         .unwrap(),
-    // );
-    
+        
     // 2) Phase 1: simulate in parallel, updating the bar
-    let trajectories: Vec<(Array1<f64>, Array1<usize>, Vec<Array1<Complex64>>)> = 
+    let trajectories: Vec<(Array1<f64>, Array1<f64>, Array1<f64>, Array1<usize>, Array1<usize>, Array1<usize>, Array1<f64>, Array1<f64>, Array1<f64>, f64, f64, f64)> = 
         (0..num_trajectories)
             .into_par_iter()
             .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time, betawc, m))
-            .filter(|(times, _, _)| times.len() >= 2)
+            .filter(|(ticks_n, _, _, _, _, _, _, _, _, _, _, _)| ticks_n.len() >= 2)
             .collect();
     
-    // pb_traj.finish_with_message("Simulation complete.");
-    
-    
-    // // Create and configure progress bar for data analysis
-    // let pb_analyze = ProgressBar::new(trajectories.len() as u64);
-    // pb_analyze.set_style(
-    //     ProgressStyle::default_bar()
-    //     .template("Analyzing: [{bar:40.magenta/black}] {pos}/{len} ({eta})")
-    //     .unwrap(),
-    // );
-    
-
-    // 2) Phase 2: analyze each trajectory in parallel with progress updates
-    // Considering accumulated emissions
-    let a_minus: i32 = 1; // Weight for emission
-    let a_plus: i32 = 0; // Weight for absorption
-    let results_n: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = 
-        trajectories
-            .par_iter()
-            .map(|traj| {
-                let (times, types, wfs) = traj;
-                let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
-                if aux_ticks.len() > 1 {
-                    Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
-                } else {
-                    None
-                }
-            })
-            .filter_map(|res| res)
-            .collect();
-
-
-    // Considering dynamical activity
-    let a_minus: i32 = 1; // Weight for emission
-    let a_plus: i32 = 1; // Weight for absorption
-    let results_k: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = 
-        trajectories
-            .par_iter()
-            .map(|traj| {
-                let (times, types, wfs) = traj;
-                let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
-                if aux_ticks.len() > 1 {
-                    Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
-                } else {
-                    None
-                }
-            })
-            .filter_map(|res| res)
-            .collect();
-
-
-    // Considering dissipated heat current
-    let a_minus: i32 = 1; // Weight for emission
-    let a_plus: i32 = -1; // Weight for absorption
-    let results_q: Vec<(Vec<f64>, Vec<usize>, Vec<f64>)> = trajectories
-        .into_par_iter()
-        .map(|(times, types, wfs)| {
-            let aux_ticks = compute_tick_times(&types, a_minus, a_plus, m);
-            if aux_ticks.len() > 1 {
-                Some(analyze_ticks(&times, &types, &wfs, &aux_ticks, beta, omega_c, &pi))
-            } else {
-                None
-            }
-        })
-        .filter_map(|res| res)
-        .collect();
 
 
     // pb_analyze.finish_with_message("Analysis complete.");
@@ -608,35 +437,53 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let mut waits_n = Vec::new();        // flattened for histogram
     let mut activities_n = Vec::new(); // one avg per trajectory
     let mut entropies_n = Vec::new(); // one avg per trajectory
-
-    for (wts, acts, ents) in results_n {
-        waits_n.extend(wts); // flatten all waits
-
-        activities_n.extend(acts); // flatten all activities
-
-        entropies_n.extend(ents); // flatten all entropies
-    }
-
-    let arr_ent_n = Array1::from(entropies_n); // assuming entropies: Vec<f64>
-    let mean_ent_n = arr_ent_n.mean().unwrap_or(0.0); // Mean of entropies
-    let exp_entropy_tick_n = (arr_ent_n.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_n.len() as f64).ln()).exp();
-
-    let arr_act_n: Array1<f64> = Array1::from_iter(activities_n.iter().map(|&x| x as f64));
-    let mean_act_n = arr_act_n.mean().unwrap_or(0.0); // Mean of entropies
-
+    let mut entropies_mar_n = Vec::new(); // one avg per trajectory    
 
     // Combine all results dynamical activity
     let mut waits_k = Vec::new();        // flattened for histogram
     let mut activities_k = Vec::new(); // one avg per trajectory
     let mut entropies_k = Vec::new(); // one avg per trajectory
+    let mut entropies_mar_k = Vec::new(); // one avg per trajectory    
+    
+    // Combine all results dynamical activity
+    let mut waits_q = Vec::new();        // flattened for histogram
+    let mut activities_q = Vec::new(); // one avg per trajectory
+    let mut entropies_q = Vec::new(); // one avg per trajectory
+    let mut entropies_mar_q = Vec::new(); // one avg per trajectory    
 
-    for (wts, acts, ents) in results_k {
-        waits_k.extend(wts); // flatten all waits
+    for (ticks_n, ticks_k, ticks_q, 
+        activity_tick_n, activity_tick_k, activity_tick_q,
+        entropy_tick_n, entropy_tick_k, entropy_tick_q,
+        entropy_mar_n, entropy_mar_k, entropy_mar_q) 
+        in trajectories {
 
-        activities_k.extend(acts); // flatten all activities
+        waits_n.extend(ticks_n); // flatten all waits
+        waits_k.extend(ticks_k); // flatten all waits
+        waits_q.extend(ticks_q); // flatten all waits
 
-        entropies_k.extend(ents); // flatten all entropies
+        activities_n.extend(activity_tick_n); // flatten all activities
+        activities_k.extend(activity_tick_k); // flatten all activities
+        activities_q.extend(activity_tick_q); // flatten all activities
+
+        entropies_n.extend(entropy_tick_n); // flatten all entropies
+        entropies_k.extend(entropy_tick_k); // flatten all entropies
+        entropies_q.extend(entropy_tick_q); // flatten all entropies
+
+        entropies_mar_n.push(entropy_mar_n); // flatten all entropies
+        entropies_mar_k.push(entropy_mar_k); // flatten all entropies
+        entropies_mar_q.push(entropy_mar_q); // flatten all entropies
     }
+
+    let arr_ent_n = Array1::from(entropies_n); // assuming entropies: Vec<f64>
+    let mean_ent_n = arr_ent_n.mean().unwrap_or(0.0); // Mean of entropies
+    let exp_entropy_tick_n = (arr_ent_n.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_n.len() as f64).ln()).exp();
+    
+    let arr_act_n: Array1<f64> = Array1::from_iter(activities_n.iter().map(|&x| x as f64));
+    let mean_act_n = arr_act_n.mean().unwrap_or(0.0); // Mean of entropies
+    
+    let arr_ent_mar_n = Array1::from(entropies_mar_n); // assuming entropies: Vec<f64>
+    let exp_entropy_mar_n = (arr_ent_mar_n.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_mar_n.len() as f64).ln()).exp();
+
 
     let arr_ent_k = Array1::from(entropies_k); // assuming entropies: Vec<f64>
     let mean_ent_k = arr_ent_k.mean().unwrap_or(0.0); // Mean of entropies
@@ -645,19 +492,9 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let arr_act_k: Array1<f64> = Array1::from_iter(activities_k.iter().map(|&x| x as f64));
     let mean_act_k = arr_act_k.mean().unwrap_or(0.0); // Mean of entropies
 
+    let arr_ent_mar_k = Array1::from(entropies_mar_k); // assuming entropies: Vec<f64>
+    let exp_entropy_mar_k = (arr_ent_mar_k.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_mar_k.len() as f64).ln()).exp();
 
-    // Combine all results dynamical activity
-    let mut waits_q = Vec::new();        // flattened for histogram
-    let mut activities_q = Vec::new(); // one avg per trajectory
-    let mut entropies_q = Vec::new(); // one avg per trajectory
-
-    for (wts, acts, ents) in results_q {
-        waits_q.extend(wts); // flatten all waits
-
-        activities_q.extend(acts); // flatten all activities
-
-        entropies_q.extend(ents); // flatten all entropies
-    }
 
     let arr_ent_q = Array1::from(entropies_q); // assuming entropies: Vec<f64>
     let mean_ent_q = arr_ent_q.mean().unwrap_or(0.0); // Mean of entropies
@@ -665,6 +502,10 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
 
     let arr_act_q: Array1<f64> = Array1::from_iter(activities_q.iter().map(|&x| x as f64));
     let mean_act_q = arr_act_q.mean().unwrap_or(0.0); // Mean of entropies
+
+    let arr_ent_mar_q = Array1::from(entropies_mar_q); // assuming entropies: Vec<f64>
+    let exp_entropy_mar_q = (arr_ent_mar_q.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_mar_q.len() as f64).ln()).exp();
+
 
     // Compute accuracies and resolutions
     let mean_waits_n = waits_n.iter().copied().sum::<f64>() / waits_n.len() as f64;
@@ -725,18 +566,18 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
         exp_entropy_tick_n: exp_entropy_tick_n,
         exp_entropy_tick_k: exp_entropy_tick_k,
         exp_entropy_tick_q: exp_entropy_tick_q,
-        exp_entropy_mar_n: 0.0, // Placeholder, not calculated
-        exp_entropy_mar_k: 0.0, // Placeholder, not calculated
-        exp_entropy_mar_q: 0.0, // Placeholder, not calculated
+        exp_entropy_mar_n: exp_entropy_mar_n, 
+        exp_entropy_mar_k: exp_entropy_mar_k, 
+        exp_entropy_mar_q: exp_entropy_mar_q, 
         accuracy_n: accuracy_n,
         accuracy_k: accuracy_k,
         accuracy_q: accuracy_q,
         resolution_n: resolution_n,
         resolution_k: resolution_k,
         resolution_q: resolution_q,
-        activity_tick_n: mean_act_n,// Placeholder, not calculated
-        activity_tick_k: mean_act_k,// Placeholder, not calculated
-        activity_tick_q: mean_act_q,// Placeholder, not calculated
+        activity_tick_n: mean_act_n,
+        activity_tick_k: mean_act_k,
+        activity_tick_q: mean_act_q,
     })
 }
 
