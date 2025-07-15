@@ -1,13 +1,9 @@
 use ndarray::{array, Array1, Array2, s};
-// use ndarray::linalg::kron;
 
 use num_complex::Complex64;
 use rand::Rng;
 
 use rayon::prelude::*;
-// use plotters::prelude::*;
-
-// use indicatif::{ProgressBar, ProgressStyle};
 
 fn create_jump_operators(lambda: f64, s: f64) -> (Array2<Complex64>, Array2<Complex64>) {
 
@@ -94,6 +90,19 @@ fn steady_state(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64) -> (Array2<Comp
     (pi, psi1, psi2, eig_vals)
 }
 
+fn inst_entropy(pi: &Array2<Complex64> , psi: &Array1<Complex64>, inst_n_m: usize, inst_n_p: usize, betawc:f64) -> f64 {
+    let p = {
+        let inner = pi.dot(psi);
+        let amp = psi.mapv(|c| c.conj()).dot(&inner).re;
+        amp.clamp(1e-12, 1.0)
+    };
+
+    let inst_q = betawc * (inst_n_m - inst_n_p) as f64;
+    let inst_s = -p.ln() + inst_q;
+
+    inst_s
+}
+
 fn simulate_trajectory(
     gamma_p: f64,
     gamma_m: f64,
@@ -101,13 +110,15 @@ fn simulate_trajectory(
     s: f64,
     dt: f64,
     total_time: f64,
-) -> (Array1<f64>, Array1<usize>, Vec<Array1<Complex64>>) {
+    betawc: f64,
+    m: usize,
+) -> (Array1<f64>, Array1<f64>, Array1<f64>, Array1<usize>, Array1<usize>, Array1<usize>, Array1<f64>, Array1<f64>, Array1<f64>, f64, f64, f64) {
     let (l_plus, l_minus) = create_jump_operators(lambda, s);
 
     let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
     + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
     
-    let (_, psi1, psi2, eigvals) = steady_state(s, lambda, gamma_p, gamma_m);
+    let (pi, psi1, psi2, eigvals) = steady_state(s, lambda, gamma_p, gamma_m);
     let mut rng = rand::thread_rng();
     let i = if rng.gen::<f64>() < eigvals[0] { 0 } else { 1 };
     let mut psi;
@@ -122,16 +133,39 @@ fn simulate_trajectory(
         psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
     }
 
-    let mut times = Vec::new();
-    let mut types = Vec::new();
-    let mut wfs = Vec::new();
+    let mut ticks_n = Vec::new();
+    let mut ticks_k = Vec::new();
+    let mut ticks_q = Vec::new();
     
+    let mut last_tick_n = 0.0;
+    let mut last_tick_k = 0.0;
+    let mut last_tick_q = 0.0;
+
+    let mut activity_tick_n_set = Vec::new();
+    let mut activity_tick_k_set = Vec::new();
+    let mut activity_tick_q_set = Vec::new();
+
+    let mut last_activity_n = 0;
+    let mut last_activity_k = 0;
+    let mut last_activity_q = 0;
+
+    let mut inst_n_m = 0; 
+    let mut inst_n_p = 0;
+
+    let mut entropys_tick_n_set = Vec::new();
+    let mut entropys_tick_k_set = Vec::new();
+    let mut entropys_tick_q_set = Vec::new();
+
+    let mut inst_s_n = inst_entropy(&pi , &psi, inst_n_m, inst_n_p, betawc);
+    let mut inst_s_k = inst_s_n;
+    let mut inst_s_q = inst_s_n;
     
     let mut r = rng.gen::<f64>();
     let mut q = rng.gen::<f64>();
 
     let mut p_p = 1.;
     let mut p_m = 1.;
+
     
     for i in 0..steps{
         
@@ -159,10 +193,9 @@ fn simulate_trajectory(
             r = rng.gen::<f64>();
             
             p_p = 1.;
+
+            inst_n_p += 1;
             
-            times.push(i as f64 * dt);
-            types.push(1);
-            wfs.push(psi.clone());
         } else if q >= p_m {
             let dpsi_j_m = l_minus.dot(&psi).mapv(|x| x / (amp_m.re).sqrt());
             psi = dpsi_j_m;
@@ -173,84 +206,78 @@ fn simulate_trajectory(
             
             p_m = 1.;
 
-            times.push(i as f64 * dt);
-            types.push(0);
-            wfs.push(psi.clone());
+            inst_n_m += 1;
+
         } else {
             // No jump, just evolve
             psi = &psi + &dpsi_nh;
             psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
         }
 
+        if inst_n_m >= (ticks_n.len()+1) * m {
+            ticks_n.push(i as f64 * dt - last_tick_n);
+            last_tick_n = i as f64 * dt;
+
+            entropys_tick_n_set.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_n);
+            inst_s_n = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
+
+            activity_tick_n_set.push((inst_n_m + inst_n_p) - last_activity_n);
+            last_activity_n = inst_n_m + inst_n_p;
+
+        } 
+
+        if (inst_n_m + inst_n_p) >= (ticks_k.len()+1) * m {
+            ticks_k.push(i as f64 * dt - last_tick_k);
+            last_tick_k = i as f64 * dt;
+
+            entropys_tick_k_set.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_k);
+            inst_s_k = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
+
+            activity_tick_k_set.push((inst_n_m + inst_n_p) - last_activity_k);
+            last_activity_k = inst_n_m + inst_n_p;            
+
+        }
+
+        if (inst_n_m - inst_n_p) >= (ticks_q.len()+1) * m {
+            ticks_q.push(i as f64 * dt - last_tick_q);
+            last_tick_q = i as f64 * dt;
+
+            entropys_tick_q_set.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_q);
+            inst_s_q = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
+
+            activity_tick_q_set.push((inst_n_m + inst_n_p) - last_activity_q);
+            last_activity_q = inst_n_m + inst_n_p;
+
+        }
 
         p_m *= 1.0 - prob_m;
         p_p *= 1.0 - prob_p;
 
-
-
     }
 
-    // Convert times to Array1
-    let times: Array1<f64> = Array1::from(times);
-    let types: Array1<usize> = Array1::from(types);
+    let ticks_n: Array1<f64> = Array1::from(ticks_n);
+    let ticks_k: Array1<f64> = Array1::from(ticks_k);
+    let ticks_q: Array1<f64> = Array1::from(ticks_q);
 
-    (times, types, wfs)
+    let activity_tick_n_set: Array1<usize> = Array1::from(activity_tick_n_set);
+    let activity_tick_k_set: Array1<usize> = Array1::from(activity_tick_k_set);
+    let activity_tick_q_set: Array1<usize> = Array1::from(activity_tick_q_set);
+    
+    let entropy_tick_n_set: Array1<f64> = Array1::from(entropys_tick_n_set[1..].to_vec());
+    let entropy_tick_k_set: Array1<f64> = Array1::from(entropys_tick_k_set[1..].to_vec());
+    let entropy_tick_q_set: Array1<f64> = Array1::from(entropys_tick_q_set[1..].to_vec());
+    
+    let entropy_mar_n: f64 = entropys_tick_n_set[0];
+    let entropy_mar_k: f64 = entropys_tick_k_set[0];
+    let entropy_mar_q: f64 = entropys_tick_q_set[0];
+
+
+    (ticks_n, ticks_k, ticks_q, 
+     activity_tick_n_set, activity_tick_k_set, activity_tick_q_set,
+     entropy_tick_n_set, entropy_tick_k_set, entropy_tick_q_set,
+     entropy_mar_n, entropy_mar_k, entropy_mar_q)
 }
 
-
-// fn lindblad_simulation(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64, total_time: f64, dt: f64) -> Vec<f64> {
-//     let max_steps = (total_time / dt).ceil() as usize;
-//     let mut sz_exp = Vec::with_capacity(max_steps);
-
-//     let (l_plus, l_minus) = create_jump_operators(lambda, s);
-
-
-//     // let sigma_pm = sigma_plus.dot(&sigma_minus);
-//     let identity = array![
-//         [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)],
-//         [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)]
-//     ];
-
-//     let v_identity = array![
-//         Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0),
-//         Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)
-//     ];
-
-//     let v_sigma_z = array![
-//         [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)],
-//         [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)],
-//         [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(-1.0, 0.0), Complex64::new(0.0, 0.0)],
-//         [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0), Complex64::new(-1.0, 0.0)]
-//     ];
-
-
-//     let term2_m = kron(&l_minus, &l_plus.t());
-//     let term2_p = kron(&l_plus, &l_minus.t());
-
-//     let left_p = l_minus.dot(&l_plus);
-//     let right_p = l_plus.t().dot(&l_minus.t());
-
-//     let left_m = l_plus.dot(&l_minus);
-//     let right_m = l_minus.t().dot(&l_plus.t());
-
-//     let term3_m = (kron(&left_m, &identity) + kron(&identity, &right_m)).mapv(|e| e * 0.5); 
-//     let term3_p = (kron(&left_p, &identity) + kron(&identity, &right_p)).mapv(|e| e * 0.5);
-
-//     let s_l = (&term2_m - &term3_m).mapv(|e| e * gamma_m / s) + (&term2_p - &term3_p).mapv(|e| e * gamma_p / s);
-
-//     let (rho,_,_,_) = steady_state(s, lambda, gamma_p, gamma_m);
-//     let mut v_rho: Array1<Complex64> = rho.iter().cloned().collect();
-
-//     for _ in 0..max_steps {
-//         v_rho = &v_rho + (&s_l.dot(&v_rho)).mapv(|e| e * dt);
-//         v_rho = v_rho.mapv(|e| e / v_identity.dot(&v_rho).re);
-
-//         let szz = v_identity.dot(&v_sigma_z.dot(&v_rho)).re;
-//         sz_exp.push(szz);
-//     }
-
-//     sz_exp
-// }
 
 fn compute_tick_times(
     types: &Array1<usize>,
@@ -395,219 +422,6 @@ fn counts_per_bin(
         .collect()
 }
 
-
-// fn plot_histogram(
-//     counts: &Vec<f64>,
-//     bin_width: f64,
-//     min: f64,
-//     max: f64,
-//     filename: &str,
-// ) -> Result<(), Box<dyn std::error::Error>> {
-
-//     // Set up drawing area
-//     let root = BitMapBackend::new(filename, (1600, 1200)).into_drawing_area();
-//     root.fill(&WHITE)?;
-
-//     let max_count = counts
-//         .iter()
-//         .cloned()
-//         .fold(0.0, f64::max);
-
-
-//     let mut chart = ChartBuilder::on(&root)
-//         .caption("Histogram", ("FiraCode Nerd Font", 40))
-//         .margin(30)
-//         .x_label_area_size(40)
-//         .y_label_area_size(40)
-//         .build_cartesian_2d(min..max, 0.0..max_count)?;
-
-//     chart.configure_mesh()
-//         .x_desc("Value")
-//         .y_desc("Count")
-//         .draw()?;
-
-//     // Draw bars
-//     for (i, &count) in counts.iter().enumerate() {
-//         let x0 = min + i as f64 * bin_width;
-//         let x1 = x0 + bin_width;
-//         chart.draw_series(
-//             std::iter::once(Rectangle::new(
-//                 [(x0, 0.), (x1, count)],
-//                 BLUE.filled(),
-//             )),
-//         )?;
-//     }
-
-//     Ok(())
-// }
-
-// fn plot_trajectory_avg(
-//     // avg_cm: Array1<f64>,
-//     // avg_rj: Array1<f64>,
-//     lindblad_avg: Vec<f64>,
-//     steps: usize,
-//     filename: &str,
-// ) -> Result<(), Box<dyn std::error::Error>> {
-
-//     let root = BitMapBackend::new(&filename, (1600, 1200)).into_drawing_area();
-//     root.fill(&WHITE)?;
-
-//     let min = lindblad_avg
-//         .iter()
-//         .cloned()
-//         .fold(f64::INFINITY, f64::min);
-
-//     let max = lindblad_avg
-//         .iter()
-//         .cloned()
-//         .fold(f64::NEG_INFINITY, f64::max);
-
-//     let mut chart = ChartBuilder::on(&root)
-//         .caption("Average <σ_z> trajectory", ("FiraCode Nerd Font", 30))
-//         .margin(100)
-//         .x_label_area_size(40)
-//         .y_label_area_size(40)
-//         .build_cartesian_2d(0..steps, (1.1 * min)..(1.1* max))?;
-
-//     chart.configure_mesh()
-//         .x_desc("Time steps")
-//         .y_desc("<σ_z>")
-//         .label_style(("FiraCode Nerd Font", 30).into_font())
-//         .draw()?;
-
-
-//     chart.draw_series(LineSeries::new(
-//         lindblad_avg.iter().enumerate().map(|(x, y)| (x, *y)),
-//         &MAGENTA,
-//     ))?
-//     .label("Avg")
-//     .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &MAGENTA));
-
-//     chart.configure_series_labels()
-//     .position(SeriesLabelPosition::UpperRight)
-//     .label_font(("FiraCode Nerd Font", 40).into_font())
-//     .draw()?;
-
-//     Ok(())
-// }
-
-// fn plot_multiple_histogram(
-//     counts_val: &[Vec<f64>],
-//     bin_width_val: &[f64],
-//     total_time: f64,
-//     filename_rj: &str,
-// ) -> Result<(), Box<dyn std::error::Error>> {
-//     assert_eq!(
-//         counts_val.len(),
-//         bin_width_val.len(),
-//         "counts_val and bin_width_val must have the same length"
-//     );
-
-//     // Compute global max_count across all histograms
-//     let global_max = counts_val
-//         .iter()
-//         .flat_map(|counts| counts.iter())
-//         .cloned()
-//         .fold(0.0_f64, f64::max);
-
-//     // Single drawing area
-//     let root = BitMapBackend::new(filename_rj, (1600, 1200)).into_drawing_area();
-//     root.fill(&WHITE)?;
-
-//     // Build one chart spanning the full area
-//     let mut chart = ChartBuilder::on(&root)
-//         .caption("Changing both", ("sans-serif", 40))
-//         .margin(30)
-//         .x_label_area_size(50)
-//         .y_label_area_size(60)
-//         .build_cartesian_2d(0.0..250.0, 0.0..global_max)?;
-
-//     chart
-//         .configure_mesh()
-//         .x_desc("Time")
-//         .y_desc("Count")
-//         .draw()?;
-
-//     // A palette of base colors (RGBColor refs)
-//     let palette = [&RED, &BLUE, &GREEN, &MAGENTA, &CYAN];
-
-//     for (idx, (counts, &bin_width)) in
-//         counts_val.iter().zip(bin_width_val.iter()).enumerate()
-//     {
-//         // pick the base color for this series
-//         let color = palette[idx % palette.len()];
-
-//         // build a semi‑transparent ShapeStyle once
-//         let bar_style = color.mix(0.6).filled();
-
-//         // draw each bar with that style
-//         for (i, &count) in counts.iter().enumerate() {
-//             let x0 = i as f64 * bin_width;
-//             let x1 = x0 + bin_width;
-//             chart.draw_series(std::iter::once(
-//                 Rectangle::new([(x0, 0.0), (x1, count)], bar_style.clone()),
-//             ))?;
-//         }
-
-//         // add a legend entry using the *same* style
-//         chart
-//             .draw_series(std::iter::once(Circle::new(
-//                 (total_time * 0.05, global_max * (0.95 - 0.05 * idx as f64)),
-//                 5,
-//                 bar_style.clone(),
-//             )))?
-//             .label(format!("alpha {}", idx))
-//             .legend(move |(x, y)| {
-//                 Rectangle::new([(x, y - 5), (x + 10, y + 5)], bar_style.clone())
-//             });
-//     }
-
-//     // then draw the legend box once at the end
-//     chart
-//         .configure_series_labels()
-//         .background_style(&WHITE.mix(0.8))
-//         .border_style(&BLACK)
-//         .draw()?;
-
-//     Ok(())
-// }
-
-// fn plot_entropy_vs_n_traj(
-//     entropies_traj: Vec<f64>,
-//     n_traj: Vec<usize>,
-//     filename: &str,
-// ) -> Result<(), Box<dyn std::error::Error>> {
-//     assert_eq!(entropies_traj.len(), n_traj.len());
-
-//     // Set up the plot
-//     let root = BitMapBackend::new(filename, (1600, 1200)).into_drawing_area();
-//     root.fill(&WHITE)?;
-
-//     let x_range = *n_traj.iter().min().unwrap() as f64..*n_traj.iter().max().unwrap() as f64;
-//     let y_range = entropies_traj
-//         .iter()
-//         .cloned()
-//         .fold(f64::INFINITY..f64::NEG_INFINITY, |acc, v| {
-//             acc.start.min(v)..acc.end.max(v)
-//         });
-
-//     let mut chart = ChartBuilder::on(&root)
-//         .caption("Transformed Entropy vs. Number of Trajectories", ("sans-serif", 30))
-//         .margin(40)
-//         .x_label_area_size(40)
-//         .y_label_area_size(60)
-//         .build_cartesian_2d(x_range.clone(), y_range.clone())?;
-
-//     chart.configure_mesh().draw()?;
-
-//     chart.draw_series(LineSeries::new(
-//         n_traj.iter().zip(entropies_traj.iter()).map(|(x, y)| (*x as f64, *y)),
-//         &RED,
-//     ))?;
-
-//     Ok(())
-// }
-
 // Configuration struct to organize parameters
 #[derive(Debug, Clone)]
 struct SimulationConfig {
@@ -690,6 +504,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let num_trajectories = config.num_trajectories;
     let m = config.m;
     
+    let betawc = beta * omega_c;
     
     // let rho_sz = lindblad_simulation(s, lambda, gamma_p, gamma_m, total_time, dt);
     // println!("{:?}", rho_norm);
@@ -715,7 +530,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let trajectories: Vec<(Array1<f64>, Array1<usize>, Vec<Array1<Complex64>>)> = 
         (0..num_trajectories)
             .into_par_iter()
-            .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time))
+            .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time, betawc, m))
             .filter(|(times, _, _)| times.len() >= 2)
             .collect();
     
