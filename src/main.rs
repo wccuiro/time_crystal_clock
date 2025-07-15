@@ -97,7 +97,7 @@ fn inst_entropy(pi: &Array2<Complex64> , psi: &Array1<Complex64>, inst_n_m: usiz
         amp.clamp(1e-12, 1.0)
     };
 
-    let inst_q = betawc * (inst_n_m - inst_n_p) as f64;
+    let inst_q = betawc * (inst_n_m as f64 - inst_n_p as f64) ;
     let inst_s = -p.ln() + inst_q;
 
     inst_s
@@ -112,7 +112,7 @@ fn simulate_trajectory(
     total_time: f64,
     betawc: f64,
     m: usize,
-) -> (Array1<f64>, Array1<f64>, Array1<f64>, Array1<usize>, Array1<usize>, Array1<usize>, Array1<f64>, Array1<f64>, Array1<f64>, f64, f64, f64) {
+) -> (Vec<f64>, Vec<f64>, Vec<f64>, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) {
     let (l_plus, l_minus) = create_jump_operators(lambda, s);
 
     let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
@@ -220,7 +220,7 @@ fn simulate_trajectory(
 
             entropys_tick_n.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_n);
             inst_s_n = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
-
+            
             activity_tick_n.push((inst_n_m + inst_n_p) - last_activity_n);
             last_activity_n = inst_n_m + inst_n_p;
 
@@ -255,32 +255,43 @@ fn simulate_trajectory(
 
     }
 
-    let ticks_n: Array1<f64> = Array1::from(ticks_n[1..].to_vec());
-    let ticks_k: Array1<f64> = Array1::from(ticks_k[1..].to_vec());
-    let ticks_q: Array1<f64> = Array1::from(ticks_q[1..].to_vec());
+    let ticks_n = ticks_n[1..].to_vec();
+    let ticks_k = ticks_k[1..].to_vec();
+    let ticks_q = ticks_q[1..].to_vec();
 
     let activity_tick_n: Array1<usize> = Array1::from(activity_tick_n[1..].to_vec());
     let activity_tick_k: Array1<usize> = Array1::from(activity_tick_k[1..].to_vec());
     let activity_tick_q: Array1<usize> = Array1::from(activity_tick_q[1..].to_vec());
     
-    let entropy_tick_n: Array1<f64> = Array1::from(entropys_tick_n[1..].to_vec());
-    let entropy_tick_k: Array1<f64> = Array1::from(entropys_tick_k[1..].to_vec());
-    let entropy_tick_q: Array1<f64> = Array1::from(entropys_tick_q[1..].to_vec());
-    
     let entropy_mar_n: f64 = entropys_tick_n[0];
     let entropy_mar_k: f64 = entropys_tick_k[0];
     let entropy_mar_q: f64 = entropys_tick_q[0];
 
-    println!("{}, {}, {}",
-        ticks_n.len() == activity_tick_n.len() && activity_tick_n.len() == entropy_tick_n.len(),
-        ticks_k.len() == activity_tick_k.len() && activity_tick_k.len() == entropy_tick_k.len(),
-        ticks_q.len() == activity_tick_q.len() && activity_tick_q.len() == entropy_tick_q.len()
-    );
+    let entropy_tick_n: Array1<f64> = Array1::from(entropys_tick_n[1..].to_vec());
+    let entropy_tick_k: Array1<f64> = Array1::from(entropys_tick_k[1..].to_vec());
+    let entropy_tick_q: Array1<f64> = Array1::from(entropys_tick_q[1..].to_vec());
+    
+
+    // Computing cumulative results insead of vectors
+    let activity_tick_n_sum: f64 = activity_tick_n.iter().sum::<usize>() as f64;
+    let activity_tick_k_sum: f64 = activity_tick_k.iter().sum::<usize>() as f64;
+    let activity_tick_q_sum: f64 = activity_tick_q.iter().sum::<usize>() as f64;
+
+    let entropy_tick_n_sum: f64 = entropy_tick_n.iter().sum();
+    let entropy_tick_k_sum: f64 = entropy_tick_k.iter().sum();
+    let entropy_tick_q_sum: f64 = entropy_tick_q.iter().sum();
+
+    let exp_entropy_tick_n_sum = entropy_tick_n.mapv(|e| (-e).exp()).sum();
+    let exp_entropy_tick_k_sum = entropy_tick_k.mapv(|e| (-e).exp()).sum();
+    let exp_entropy_tick_q_sum = entropy_tick_q.mapv(|e| (-e).exp()).sum();
 
     (ticks_n, ticks_k, ticks_q, 
-     activity_tick_n, activity_tick_k, activity_tick_q,
-     entropy_tick_n, entropy_tick_k, entropy_tick_q,
-     entropy_mar_n, entropy_mar_k, entropy_mar_q)
+        activity_tick_n_sum, activity_tick_k_sum, activity_tick_q_sum,
+        entropy_tick_n_sum, entropy_tick_k_sum, entropy_tick_q_sum,
+        exp_entropy_tick_n_sum, exp_entropy_tick_k_sum, exp_entropy_tick_q_sum,
+        entropy_mar_n, entropy_mar_k, entropy_mar_q)
+    //  activity_tick_n, activity_tick_k, activity_tick_q,
+    //  entropy_tick_n, entropy_tick_k, entropy_tick_q,
 }
 
 
@@ -427,81 +438,64 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let betawc = beta * omega_c;
         
     // 2) Phase 1: simulate in parallel, updating the bar
- // Define a struct or tuple for the reduced result of each trajectory
     let (waits_n, waits_k, waits_q, 
-        activities_n, activities_k, activities_q,
-        entropies_n, entropies_k, entropies_q,
+        activities_n_sum, activities_k_sum, activities_q_sum,
+        entropies_n_sum, entropies_k_sum, entropies_q_sum,
+        exp_entropies_n_sum, exp_entropies_k_sum, exp_entropies_q_sum,
         entropies_mar_n, entropies_mar_k, entropies_mar_q): 
-        (Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>) = 
-        
+        (Vec<f64>, Vec<f64>, Vec<f64>, 
+        f64, f64, f64,
+        f64, f64, f64,
+        f64, f64, f64,
+        f64, f64, f64) = 
         (0..num_trajectories)
             .into_par_iter()
             .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time, betawc, m))
-            .filter(|(ticks_n, _, _, _, _, _, _, _, _, _, _, _)| ticks_n.len() >= 2)
-            .map(|(
-                ticks_n, ticks_k, ticks_q,
-                activity_tick_n, activity_tick_k, activity_tick_q,
-                entropy_tick_n, entropy_tick_k, entropy_tick_q,
-                entropy_mar_n, entropy_mar_k, entropy_mar_q
-            )| {
-                (
-                    ticks_n.to_vec(), ticks_k.to_vec(), ticks_q.to_vec(),
-                    activity_tick_n.to_vec(), activity_tick_k.to_vec(), activity_tick_q.to_vec(),
-                    entropy_tick_n.to_vec(), entropy_tick_k.to_vec(), entropy_tick_q.to_vec(),
-                    vec![entropy_mar_n], vec![entropy_mar_k], vec![entropy_mar_q]
-                )
-            })
+            .filter(|(ticks_n, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| ticks_n.len() >= 2)
             .reduce(
-                || (vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![]),
+                || (
+                    Vec::new(), Vec::new(), Vec::new(), // waits_n, waits_k, waits_q
+                    0.0, 0.0, 0.0,         // activities_n_sum, activities_k_sum, activities_q_sum
+                    0.0, 0.0, 0.0,         // entropies_n_sum, entropies_k_sum, entropies_q_sum
+                    0.0, 0.0, 0.0,         // exp_entropies_n_sum, exp_entropies_k_sum, exp_entropies_q_sum
+                    0.0, 0.0, 0.0          // entropies_mar_n, entropies_mar_k, entropies_mar_q
+                ),
                 |mut acc, x| {
-                    acc.0.extend(x.0);
-                    acc.1.extend(x.1);
-                    acc.2.extend(x.2);
-                    acc.3.extend(x.3);
-                    acc.4.extend(x.4);
-                    acc.5.extend(x.5);
-                    acc.6.extend(x.6);
-                    acc.7.extend(x.7);
-                    acc.8.extend(x.8);
-                    acc.9.extend(x.9);
-                    acc.10.extend(x.10);
-                    acc.11.extend(x.11);
+                    acc.0.extend(x.0);  // waits_n - flatten Array1 to Vec
+                    acc.1.extend(x.1);  // waits_k - flatten Array1 to Vec
+                    acc.2.extend(x.2);  // waits_q - flatten Array1 to Vec
+                    acc.3 += x.3;  // activities_n_sum
+                    acc.4 += x.4;  // activities_k_sum
+                    acc.5 += x.5;  // activities_q_sum
+                    acc.6 += x.6;  // entropies_n_sum
+                    acc.7 += x.7;  // entropies_k_sum
+                    acc.8 += x.8;  // entropies_q_sum
+                    acc.9 += x.9;  // exp_entropies_n_sum
+                    acc.10 += x.10; // exp_entropies_k_sum
+                    acc.11 += x.11; // exp_entropies_q_sum
+                    acc.12 += (-x.12).exp(); // entropies_mar_n
+                    acc.13 += (-x.13).exp(); // entropies_mar_k
+                    acc.14 += (-x.14).exp(); // entropies_mar_q
                     acc
                 }
             );
 
-
-    let arr_ent_n = Array1::from(entropies_n); // assuming entropies: Vec<f64>
-    let mean_ent_n = arr_ent_n.mean().unwrap_or(0.0); // Mean of entropies
-    let exp_entropy_tick_n = (arr_ent_n.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_n.len() as f64).ln()).exp();
-    
-    let arr_act_n: Array1<f64> = Array1::from_iter(activities_n.iter().map(|&x| x as f64));
-    let mean_act_n = arr_act_n.mean().unwrap_or(0.0); // Mean of entropies
-    
-    let arr_ent_mar_n = Array1::from(entropies_mar_n); // assuming entropies: Vec<f64>
-    let exp_entropy_mar_n = (arr_ent_mar_n.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_mar_n.len() as f64).ln()).exp();
+    let mean_act_n = activities_n_sum / waits_n.len() as f64; // Mean of entropies
+    let mean_ent_n = entropies_n_sum/waits_n.len() as f64; // Mean of entropies
+    let mean_exp_entropy_tick_n = exp_entropies_n_sum / waits_n.len() as f64;
+    let mean_exp_entropy_mar_n = entropies_mar_n / num_trajectories as f64;
 
 
-    let arr_ent_k = Array1::from(entropies_k); // assuming entropies: Vec<f64>
-    let mean_ent_k = arr_ent_k.mean().unwrap_or(0.0); // Mean of entropies
-    let exp_entropy_tick_k = (arr_ent_k.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_k.len() as f64).ln()).exp() ;
-
-    let arr_act_k: Array1<f64> = Array1::from_iter(activities_k.iter().map(|&x| x as f64));
-    let mean_act_k = arr_act_k.mean().unwrap_or(0.0); // Mean of entropies
-
-    let arr_ent_mar_k = Array1::from(entropies_mar_k); // assuming entropies: Vec<f64>
-    let exp_entropy_mar_k = (arr_ent_mar_k.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_mar_k.len() as f64).ln()).exp();
+    let mean_act_k = activities_k_sum / waits_k.len() as f64; // Mean of entropies
+    let mean_ent_k = entropies_k_sum / waits_k.len() as f64; // Mean of entropies
+    let mean_exp_entropy_tick_k = exp_entropies_k_sum / waits_k.len() as f64;
+    let mean_exp_entropy_mar_k = entropies_mar_k / num_trajectories as f64;
 
 
-    let arr_ent_q = Array1::from(entropies_q); // assuming entropies: Vec<f64>
-    let mean_ent_q = arr_ent_q.mean().unwrap_or(0.0); // Mean of entropies
-    let exp_entropy_tick_q = (arr_ent_q.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_q.len() as f64).ln()).exp() ;
-
-    let arr_act_q: Array1<f64> = Array1::from_iter(activities_q.iter().map(|&x| x as f64));
-    let mean_act_q = arr_act_q.mean().unwrap_or(0.0); // Mean of entropies
-
-    let arr_ent_mar_q = Array1::from(entropies_mar_q); // assuming entropies: Vec<f64>
-    let exp_entropy_mar_q = (arr_ent_mar_q.mapv(|e| (-e).exp()).sum().ln() - (arr_ent_mar_q.len() as f64).ln()).exp();
+    let mean_act_q = activities_q_sum / waits_q.len() as f64; // Mean of entropies
+    let mean_ent_q = entropies_q_sum / waits_q.len() as f64; // Mean of entropies
+    let mean_exp_entropy_tick_q = exp_entropies_q_sum / waits_q.len() as f64;
+    let mean_exp_entropy_mar_q = entropies_mar_q / num_trajectories as f64;
 
 
     // Compute accuracies and resolutions
@@ -560,12 +554,12 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
         entropy_tick_n: mean_ent_n,
         entropy_tick_k: mean_ent_k,
         entropy_tick_q: mean_ent_q,
-        exp_entropy_tick_n: exp_entropy_tick_n,
-        exp_entropy_tick_k: exp_entropy_tick_k,
-        exp_entropy_tick_q: exp_entropy_tick_q,
-        exp_entropy_mar_n: exp_entropy_mar_n, 
-        exp_entropy_mar_k: exp_entropy_mar_k, 
-        exp_entropy_mar_q: exp_entropy_mar_q, 
+        exp_entropy_tick_n: mean_exp_entropy_tick_n,
+        exp_entropy_tick_k: mean_exp_entropy_tick_k,
+        exp_entropy_tick_q: mean_exp_entropy_tick_q,
+        exp_entropy_mar_n: mean_exp_entropy_mar_n, 
+        exp_entropy_mar_k: mean_exp_entropy_mar_k, 
+        exp_entropy_mar_q: mean_exp_entropy_mar_q, 
         accuracy_n: accuracy_n,
         accuracy_k: accuracy_k,
         accuracy_q: accuracy_q,
@@ -709,7 +703,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     // plot_multiple_histogram(&counts_n_set, &bin_width_n_set, total_time, "Prueba.png")?;
 
-    println!("{:?},{:?}", exp_entropy_tick_n_set, num_ticks_n_set);
+    println!("{:?}, {:?}, {:?}", exp_entropy_tick_n_set, exp_entropy_mar_n_set, num_ticks_n_set);
     // plot_entropy_vs_n_traj(exp_entropy_tick_n_set, num_ticks_n_set, "entropy_vs_n_traj.png")?;
 
     // println!("{:?}", num_ticks_n_set);
