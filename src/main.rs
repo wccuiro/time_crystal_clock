@@ -271,6 +271,11 @@ fn simulate_trajectory(
     let entropy_mar_k: f64 = entropys_tick_k[0];
     let entropy_mar_q: f64 = entropys_tick_q[0];
 
+    println!("{}, {}, {}",
+        ticks_n.len() == activity_tick_n.len() && activity_tick_n.len() == entropy_tick_n.len(),
+        ticks_k.len() == activity_tick_k.len() && activity_tick_k.len() == entropy_tick_k.len(),
+        ticks_q.len() == activity_tick_q.len() && activity_tick_q.len() == entropy_tick_q.len()
+    );
 
     (ticks_n, ticks_k, ticks_q, 
      activity_tick_n, activity_tick_k, activity_tick_q,
@@ -422,57 +427,49 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let betawc = beta * omega_c;
         
     // 2) Phase 1: simulate in parallel, updating the bar
-    let trajectories: Vec<(Array1<f64>, Array1<f64>, Array1<f64>, Array1<usize>, Array1<usize>, Array1<usize>, Array1<f64>, Array1<f64>, Array1<f64>, f64, f64, f64)> = 
+ // Define a struct or tuple for the reduced result of each trajectory
+    let (waits_n, waits_k, waits_q, 
+        activities_n, activities_k, activities_q,
+        entropies_n, entropies_k, entropies_q,
+        entropies_mar_n, entropies_mar_k, entropies_mar_q): 
+        (Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>) = 
+        
         (0..num_trajectories)
             .into_par_iter()
             .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time, betawc, m))
             .filter(|(ticks_n, _, _, _, _, _, _, _, _, _, _, _)| ticks_n.len() >= 2)
-            .collect();
-    
+            .map(|(
+                ticks_n, ticks_k, ticks_q,
+                activity_tick_n, activity_tick_k, activity_tick_q,
+                entropy_tick_n, entropy_tick_k, entropy_tick_q,
+                entropy_mar_n, entropy_mar_k, entropy_mar_q
+            )| {
+                (
+                    ticks_n.to_vec(), ticks_k.to_vec(), ticks_q.to_vec(),
+                    activity_tick_n.to_vec(), activity_tick_k.to_vec(), activity_tick_q.to_vec(),
+                    entropy_tick_n.to_vec(), entropy_tick_k.to_vec(), entropy_tick_q.to_vec(),
+                    vec![entropy_mar_n], vec![entropy_mar_k], vec![entropy_mar_q]
+                )
+            })
+            .reduce(
+                || (vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![]),
+                |mut acc, x| {
+                    acc.0.extend(x.0);
+                    acc.1.extend(x.1);
+                    acc.2.extend(x.2);
+                    acc.3.extend(x.3);
+                    acc.4.extend(x.4);
+                    acc.5.extend(x.5);
+                    acc.6.extend(x.6);
+                    acc.7.extend(x.7);
+                    acc.8.extend(x.8);
+                    acc.9.extend(x.9);
+                    acc.10.extend(x.10);
+                    acc.11.extend(x.11);
+                    acc
+                }
+            );
 
-
-    // pb_analyze.finish_with_message("Analysis complete.");
-
-    // Combine all results collective emissons
-    let mut waits_n = Vec::new();        // flattened for histogram
-    let mut activities_n = Vec::new(); // one avg per trajectory
-    let mut entropies_n = Vec::new(); // one avg per trajectory
-    let mut entropies_mar_n = Vec::new(); // one avg per trajectory    
-
-    // Combine all results dynamical activity
-    let mut waits_k = Vec::new();        // flattened for histogram
-    let mut activities_k = Vec::new(); // one avg per trajectory
-    let mut entropies_k = Vec::new(); // one avg per trajectory
-    let mut entropies_mar_k = Vec::new(); // one avg per trajectory    
-    
-    // Combine all results dynamical activity
-    let mut waits_q = Vec::new();        // flattened for histogram
-    let mut activities_q = Vec::new(); // one avg per trajectory
-    let mut entropies_q = Vec::new(); // one avg per trajectory
-    let mut entropies_mar_q = Vec::new(); // one avg per trajectory    
-
-    for (ticks_n, ticks_k, ticks_q, 
-        activity_tick_n, activity_tick_k, activity_tick_q,
-        entropy_tick_n, entropy_tick_k, entropy_tick_q,
-        entropy_mar_n, entropy_mar_k, entropy_mar_q) 
-        in trajectories {
-
-        waits_n.extend(ticks_n); // flatten all waits
-        waits_k.extend(ticks_k); // flatten all waits
-        waits_q.extend(ticks_q); // flatten all waits
-
-        activities_n.extend(activity_tick_n); // flatten all activities
-        activities_k.extend(activity_tick_k); // flatten all activities
-        activities_q.extend(activity_tick_q); // flatten all activities
-
-        entropies_n.extend(entropy_tick_n); // flatten all entropies
-        entropies_k.extend(entropy_tick_k); // flatten all entropies
-        entropies_q.extend(entropy_tick_q); // flatten all entropies
-
-        entropies_mar_n.push(entropy_mar_n); // flatten all entropies
-        entropies_mar_k.push(entropy_mar_k); // flatten all entropies
-        entropies_mar_q.push(entropy_mar_q); // flatten all entropies
-    }
 
     let arr_ent_n = Array1::from(entropies_n); // assuming entropies: Vec<f64>
     let mean_ent_n = arr_ent_n.mean().unwrap_or(0.0); // Mean of entropies
@@ -634,7 +631,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     
-    let n_pts = 20_usize;
+    let n_pts = 2_usize;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda, vec_num_trajectories, vec_m) = generate_parameter_vectors(n_pts);
