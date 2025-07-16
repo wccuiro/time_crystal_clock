@@ -257,7 +257,7 @@ fn simulate_trajectory(
         
     }
 
-    println!("{}, {}, {}", ticks_n.len(), ticks_k.len(), ticks_q.len());
+    // println!("{}, {}, {}", ticks_n.len(), ticks_k.len(), ticks_q.len());
 
     let ticks_n = ticks_n[1..].to_vec();
     let ticks_k = ticks_k[1..].to_vec();
@@ -604,7 +604,7 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         .collect();
 
     let init_num_trajectories = 100_usize;
-    let last_num_trajectories = 1000_usize;
+    let last_num_trajectories = 100000_usize;
     let vec_num_trajectories: Vec<usize> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
@@ -612,8 +612,8 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         })
         .collect();
 
-    let init_m = 1100_usize;
-    let last_m = 1100_usize;
+    let init_m = 5_usize;
+    let last_m = 5_usize;
     let vec_m: Vec<usize> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
@@ -629,15 +629,15 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
-    let dt: f64 = 0.001;            // if dt = 10-2 then total_time 5000 generates ~20 n ticks but for dt = 10-3 ~190 n ticks and after  that does not increase
-    let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
+    let dt: f64 = 0.001;            // dt = 10-3 ~20 n_ticks and after that does not increase for a threshold of 1100 and beta 2.0
+    let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 n_ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
     let beta: f64 = 0.1 / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     
-    let n_pts = 2_usize;
+    let n_pts = 50_usize;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda, vec_num_trajectories, vec_m) = generate_parameter_vectors(n_pts);
@@ -716,6 +716,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     // plot_multiple_histogram(&counts_n_set, &bin_width_n_set, total_time, "Prueba.png")?;
 
     println!("{:?}, {:?}, {:?}", exp_entropy_tick_n_set, exp_entropy_mar_n_set, num_ticks_n_set);
+    println!("{:?}, {:?}, {:?}", exp_entropy_tick_k_set, exp_entropy_mar_k_set, num_ticks_k_set);
+    println!("{:?}, {:?}, {:?}", exp_entropy_tick_q_set, exp_entropy_mar_q_set, num_ticks_q_set);
+
+    println!("{:?}, {:?}, {:?}", exp_entropy_mar_n_set, vec_num_trajectories);
+    println!("{:?}, {:?}, {:?}", exp_entropy_mar_k_set, vec_num_trajectories);
+    println!("{:?}, {:?}, {:?}", exp_entropy_mar_q_set, vec_num_trajectories);
+
     // plot_entropy_vs_n_traj(exp_entropy_tick_n_set, num_ticks_n_set, "entropy_vs_n_traj.png")?;
 
     // println!("{:?}", num_ticks_n_set);
