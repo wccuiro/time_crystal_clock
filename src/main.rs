@@ -1,4 +1,4 @@
-use ndarray::{array, Array1, Array2, s};
+use ndarray::{array, Array1, Array2};
 
 use num_complex::Complex64;
 use rand::Rng;
@@ -106,19 +106,19 @@ fn inst_entropy(pi: &Array2<Complex64> , psi: &Array1<Complex64>, inst_n_m: usiz
 fn simulate_trajectory(
     gamma_p: f64,
     gamma_m: f64,
-    lambda: f64,
     s: f64,
     dt: f64,
     total_time: f64,
     betawc: f64,
     m: usize,
+    l_plus: &Array2<Complex64>,
+    l_minus: &Array2<Complex64>,
+    h_eff: &Array2<Complex64>,
+    pi: &Array2<Complex64>,
+    psi1: &Array1<Complex64>,
+    psi2: &Array1<Complex64>,
+    eigvals: &Array1<f64>,
 ) -> (Vec<f64>, Vec<f64>, Vec<f64>, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) {
-    let (l_plus, l_minus) = create_jump_operators(lambda, s);
-
-    let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
-    + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
-    
-    let (pi, psi1, psi2, eigvals) = steady_state(s, lambda, gamma_p, gamma_m);
     let mut rng = rand::thread_rng();
     let i = if rng.gen::<f64>() < eigvals[0] { 0 } else { 1 };
     let mut psi;
@@ -170,8 +170,8 @@ fn simulate_trajectory(
     for i in 0..steps{
         
         
-        let amp_m = psi.mapv(|e| e.conj()).dot(&l_plus.dot(&l_minus).dot(&psi));
-        let amp_p = psi.mapv(|e| e.conj()).dot(&l_minus.dot(&l_plus).dot(&psi));
+        let amp_m = psi.mapv(|e| e.conj()).dot(&l_plus.dot(l_minus).dot(&psi));
+        let amp_p = psi.mapv(|e| e.conj()).dot(&l_minus.dot(l_plus).dot(&psi));
         
         let prob_p = (gamma_p / s) * amp_p.re * dt;
         let prob_m = (gamma_m / s) * amp_m.re * dt;
@@ -215,6 +215,8 @@ fn simulate_trajectory(
         }
 
         if inst_n_m >= (ticks_n.len()+1) * m {
+            // println!("{} >= {}, where {}", inst_n_m, (ticks_n.len()+1) * m, ticks_n.len());
+
             ticks_n.push(i as f64 * dt - last_tick_n);
             last_tick_n = i as f64 * dt;
 
@@ -238,21 +240,21 @@ fn simulate_trajectory(
 
         }
 
-        if (inst_n_m - inst_n_p) >= (ticks_q.len()+1) * m {
+        if (inst_n_m as i32 - inst_n_p as i32) >= ((ticks_q.len()+1) * m) as i32 {
             ticks_q.push(i as f64 * dt - last_tick_q);
             last_tick_q = i as f64 * dt;
-
+            
             entropys_tick_q.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_q);
             inst_s_q = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
-
+            
             activity_tick_q.push((inst_n_m + inst_n_p) - last_activity_q);
             last_activity_q = inst_n_m + inst_n_p;
-
+            
         }
-
+        
         p_m *= 1.0 - prob_m;
         p_p *= 1.0 - prob_p;
-
+        
     }
 
     let ticks_n = ticks_n[1..].to_vec();
@@ -263,9 +265,9 @@ fn simulate_trajectory(
     let activity_tick_k: Array1<usize> = Array1::from(activity_tick_k[1..].to_vec());
     let activity_tick_q: Array1<usize> = Array1::from(activity_tick_q[1..].to_vec());
     
-    let entropy_mar_n: f64 = entropys_tick_n[0];
-    let entropy_mar_k: f64 = entropys_tick_k[0];
-    let entropy_mar_q: f64 = entropys_tick_q[0];
+    let exp_entropy_mar_n: f64 = (-entropys_tick_n[0]).exp();
+    let exp_entropy_mar_k: f64 = (-entropys_tick_k[0]).exp();
+    let exp_entropy_mar_q: f64 = (-entropys_tick_q[0]).exp();
 
     let entropy_tick_n: Array1<f64> = Array1::from(entropys_tick_n[1..].to_vec());
     let entropy_tick_k: Array1<f64> = Array1::from(entropys_tick_k[1..].to_vec());
@@ -289,7 +291,7 @@ fn simulate_trajectory(
         activity_tick_n_sum, activity_tick_k_sum, activity_tick_q_sum,
         entropy_tick_n_sum, entropy_tick_k_sum, entropy_tick_q_sum,
         exp_entropy_tick_n_sum, exp_entropy_tick_k_sum, exp_entropy_tick_q_sum,
-        entropy_mar_n, entropy_mar_k, entropy_mar_q)
+        exp_entropy_mar_n, exp_entropy_mar_k, exp_entropy_mar_q)
     //  activity_tick_n, activity_tick_k, activity_tick_q,
     //  entropy_tick_n, entropy_tick_k, entropy_tick_q,
 }
@@ -425,7 +427,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     
     let dt = config.dt;
     let total_time = config.total_time;
-    let steps = config.steps;
+    let _steps = config.steps;
     let omega_c = config.omega_c;
     let beta = config.beta;
     let gamma_p = config.gamma_p;
@@ -436,6 +438,14 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let m = config.m;
     
     let betawc = beta * omega_c;
+
+    let (l_plus, l_minus) = create_jump_operators(lambda, s);
+
+    let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
+    + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
+    
+    let (pi, psi1, psi2, eigvals) = steady_state(s, lambda, gamma_p, gamma_m);
+
         
     // 2) Phase 1: simulate in parallel, updating the bar
     let (waits_n, waits_k, waits_q, 
@@ -450,7 +460,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
         f64, f64, f64) = 
         (0..num_trajectories)
             .into_par_iter()
-            .map(|_| simulate_trajectory(gamma_p, gamma_m, lambda, s, dt, total_time, betawc, m))
+            .map(|_| simulate_trajectory(gamma_p, gamma_m, s, dt, total_time, betawc, m, &l_plus, &l_minus, &h_eff, &pi, &psi1, &psi2, &eigvals))
             .filter(|(ticks_n, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| ticks_n.len() >= 2)
             .reduce(
                 || (
@@ -473,9 +483,9 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
                     acc.9 += x.9;  // exp_entropies_n_sum
                     acc.10 += x.10; // exp_entropies_k_sum
                     acc.11 += x.11; // exp_entropies_q_sum
-                    acc.12 += (-x.12).exp(); // entropies_mar_n
-                    acc.13 += (-x.13).exp(); // entropies_mar_k
-                    acc.14 += (-x.14).exp(); // entropies_mar_q
+                    acc.12 += x.12; // entropies_mar_n
+                    acc.13 += x.13; // entropies_mar_k
+                    acc.14 += x.14; // entropies_mar_q
                     acc
                 }
             );
@@ -617,7 +627,7 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
-    let dt: f64 = 0.01;
+    let dt: f64 = 0.001;
     let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
     let beta: f64 = 0.1 / omega_c; // Inverse temperature
