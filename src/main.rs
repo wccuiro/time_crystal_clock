@@ -715,13 +715,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     // plot_multiple_histogram(&counts_n_set, &bin_width_n_set, total_time, "Prueba.png")?;
 
-    println!("{:?}, {:?}, {:?}", exp_entropy_tick_n_set, exp_entropy_mar_n_set, num_ticks_n_set);
-    println!("{:?}, {:?}, {:?}", exp_entropy_tick_k_set, exp_entropy_mar_k_set, num_ticks_k_set);
-    println!("{:?}, {:?}, {:?}", exp_entropy_tick_q_set, exp_entropy_mar_q_set, num_ticks_q_set);
+    println!("{:?}, {:?}", exp_entropy_tick_n_set, num_ticks_n_set);
+    println!("{:?}, {:?}", exp_entropy_tick_k_set, num_ticks_k_set);
+    println!("{:?}, {:?}", exp_entropy_tick_q_set, num_ticks_q_set);
 
-    println!("{:?}, {:?}, {:?}", exp_entropy_mar_n_set, vec_num_trajectories);
-    println!("{:?}, {:?}, {:?}", exp_entropy_mar_k_set, vec_num_trajectories);
-    println!("{:?}, {:?}, {:?}", exp_entropy_mar_q_set, vec_num_trajectories);
+    println!("{:?}, {:?}", exp_entropy_mar_n_set, vec_num_trajectories);
+    println!("{:?}, {:?}", exp_entropy_mar_k_set, vec_num_trajectories);
+    println!("{:?}, {:?}", exp_entropy_mar_q_set, vec_num_trajectories);
 
     // plot_entropy_vs_n_traj(exp_entropy_tick_n_set, num_ticks_n_set, "entropy_vs_n_traj.png")?;
 
