@@ -257,6 +257,8 @@ fn simulate_trajectory(
         
     }
 
+    println!("{}, {}, {}", ticks_n.len(), ticks_k.len(), ticks_q.len());
+
     let ticks_n = ticks_n[1..].to_vec();
     let ticks_k = ticks_k[1..].to_vec();
     let ticks_q = ticks_q[1..].to_vec();
@@ -610,8 +612,8 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         })
         .collect();
 
-    let init_m = 5_usize;
-    let last_m = 5_usize;
+    let init_m = 1100_usize;
+    let last_m = 1100_usize;
     let vec_m: Vec<usize> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
@@ -627,7 +629,7 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
-    let dt: f64 = 0.001;
+    let dt: f64 = 0.001;            // if dt = 10-2 then total_time 5000 generates ~20 n ticks but for dt = 10-3 ~190 n ticks and after  that does not increase
     let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
     let beta: f64 = 0.1 / omega_c; // Inverse temperature
