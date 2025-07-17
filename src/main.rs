@@ -113,6 +113,8 @@ fn simulate_trajectory(
     m: usize,
     l_plus: &Array2<Complex64>,
     l_minus: &Array2<Complex64>,
+    l_p_m: &Array2<Complex64>,
+    l_m_p: &Array2<Complex64>,
     h_eff: &Array2<Complex64>,
     pi: &Array2<Complex64>,
     psi1: &Array1<Complex64>,
@@ -170,8 +172,8 @@ fn simulate_trajectory(
     for i in 0..steps{
         
         
-        let amp_m = psi.mapv(|e| e.conj()).dot(&l_plus.dot(l_minus).dot(&psi));
-        let amp_p = psi.mapv(|e| e.conj()).dot(&l_minus.dot(l_plus).dot(&psi));
+        let amp_m = psi.mapv(|e| e.conj()).dot(&l_p_m.dot(&psi));
+        let amp_p = psi.mapv(|e| e.conj()).dot(&l_m_p.dot(&psi));
         
         let prob_p = (gamma_p / s) * amp_p.re * dt;
         let prob_m = (gamma_m / s) * amp_m.re * dt;
@@ -379,9 +381,9 @@ struct SimulationResults {
     counts_n: Vec<f64>,
     counts_k: Vec<f64>,
     counts_q: Vec<f64>,
-    bin_width_n: f64,
-    bin_width_k: f64,
-    bin_width_q: f64,
+    bin_width_n: [f64;3],
+    bin_width_k: [f64;3],
+    bin_width_q: [f64;3],
     num_ticks_n: usize,
     num_ticks_k: usize,
     num_ticks_q: usize,
@@ -443,6 +445,9 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
 
     let (l_plus, l_minus) = create_jump_operators(lambda, s);
 
+    let l_p_m = &l_plus.dot(&l_minus);  
+    let l_m_p = &l_minus.dot(&l_plus);  
+
     let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
     + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
     
@@ -462,7 +467,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
         f64, f64, f64) = 
         (0..num_trajectories)
             .into_par_iter()
-            .map(|_| simulate_trajectory(gamma_p, gamma_m, s, dt, total_time, betawc, m, &l_plus, &l_minus, &h_eff, &pi, &psi1, &psi2, &eigvals))
+            .map(|_| simulate_trajectory(gamma_p, gamma_m, s, dt, total_time, betawc, m, &l_plus, &l_minus, &l_p_m, &l_m_p, &h_eff, &pi, &psi1, &psi2, &eigvals))
             .filter(|(ticks_n, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| ticks_n.len() >= 2)
             .reduce(
                 || (
@@ -541,13 +546,23 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     let bw_q = bin_width(&sorted_waits_q);
     
     // --- 4. Determine range ---
-    let min = *sorted_waits_n.first().unwrap_or(&0.0);
-    let max = *sorted_waits_n.last().unwrap_or(&1.0);
+    let min_n = *sorted_waits_n.first().unwrap_or(&0.0);
+    let max_n = *sorted_waits_n.last().unwrap_or(&1.0);
     
+    let min_k = *sorted_waits_k.first().unwrap_or(&0.0);
+    let max_k = *sorted_waits_k.last().unwrap_or(&1.0);
+
+    let min_q = *sorted_waits_q.first().unwrap_or(&0.0);
+    let max_q = *sorted_waits_q.last().unwrap_or(&1.0);
+
+    // println!("{}, {}", min_n, max_n);
+    // println!("{}, {}", min_k, max_k);
+    // println!("{}, {}", min_q, max_q);
+
     // --- 5. Count frequencies per bin ---
-    let counts_n = counts_per_bin(&sorted_waits_n, bw_n, min, max);
-    let counts_k = counts_per_bin(&sorted_waits_k, bw_n, min, max);
-    let counts_q = counts_per_bin(&sorted_waits_q, bw_n, min, max);
+    let counts_n = counts_per_bin(&sorted_waits_n, bw_n, min_n, max_n);
+    let counts_k = counts_per_bin(&sorted_waits_k, bw_n, min_k, max_k);
+    let counts_q = counts_per_bin(&sorted_waits_q, bw_n, min_q, max_q);
     
     // --- 6. Plot histogram ---
     // let filename = format!("WTD-histogram__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
@@ -557,9 +572,9 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
         counts_n: counts_n,
         counts_k: counts_k,
         counts_q: counts_q,
-        bin_width_n: bw_n,
-        bin_width_k: bw_k,
-        bin_width_q: bw_q,
+        bin_width_n: [bw_n, min_n, max_n],
+        bin_width_k: [bw_k, min_k, max_k],
+        bin_width_q: [bw_q, min_q, max_q],
         num_ticks_n: sorted_waits_n.len(),
         num_ticks_k: sorted_waits_k.len(),
         num_ticks_q: sorted_waits_q.len(),
@@ -604,7 +619,7 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
         .collect();
 
     let init_num_trajectories = 100_usize;
-    let last_num_trajectories = 100000_usize;
+    let last_num_trajectories = 100_usize;
 
     let log_init = (init_num_trajectories as f64).ln();
     let log_last = (last_num_trajectories as f64).ln();
@@ -618,117 +633,161 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
 
     let init_m = 5_usize;
     let last_m = 5_usize;
-    let vec_m: Vec<usize> = (0..n_pts)
-        .map(|i| {
-            let t = i as f64 / (n_pts - 1) as f64;
-            (init_m as f64 + t * (last_m - init_m) as f64) as usize
-        })
-        .collect();
+    // let vec_m: Vec<usize> = (0..n_pts)
+    //     .map(|i| {
+    //         let t = i as f64 / (n_pts - 1) as f64;
+    //         (init_m as f64 + t * (last_m - init_m) as f64) as usize
+    //     })
+    //     .collect();
     
-    // let vec_m: Vec<usize> = vec![355, 650, 705, 1100];      // Values for figure A2
+    let vec_m: Vec<usize> = vec![355, 650, 705, 1100];      // Values for figure A2
 
     (vec_omega, vec_gamma, vec_num_trajectories, vec_m)
 }
 
 
+use std::fs::OpenOptions;
+use std::io::Write;
+
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
     let dt: f64 = 0.001;            // dt = 10-3 ~20 n_ticks and after that does not increase for a threshold of 1100 and beta 2.0
-    let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 n_ticks for a threshold of 1100 and beta 2.0
+    let total_time: f64 = 500.0;        // Total time 5000 set it to have an average of 20 n_ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 0.1 / omega_c; // Inverse temperature
+    let beta: f64 = 2.0 / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     
-    let n_pts = 50_usize;
+    let n_pts = 4_usize;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda, vec_num_trajectories, vec_m) = generate_parameter_vectors(n_pts);
 
     println!("Running simulations with S: {:?}, lambda: {:?}, n_traj: {:?} and M: {:?}", vec_s, vec_lambda, vec_num_trajectories, vec_m);
 
-    // Pre-allocate result vectors
-    let mut counts_n_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
-    let mut counts_k_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
-    let mut counts_q_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
-    let mut bin_width_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut bin_width_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut bin_width_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut num_ticks_n_set: Vec<usize> = Vec::with_capacity(n_pts);
-    let mut num_ticks_k_set: Vec<usize> = Vec::with_capacity(n_pts);
-    let mut num_ticks_q_set: Vec<usize> = Vec::with_capacity(n_pts);
-    let mut entropys_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut entropys_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut entropys_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut exp_entropy_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut exp_entropy_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut exp_entropy_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut exp_entropy_mar_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut exp_entropy_mar_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut exp_entropy_mar_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut accuracy_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut accuracy_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut accuracy_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut resolution_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut resolution_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut resolution_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut activity_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut activity_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    let mut activity_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // // Pre-allocate result vectors
+    // let mut counts_n_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
+    // let mut counts_k_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
+    // let mut counts_q_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
+    // let mut bin_width_n_set: Vec<[f64;3]> = Vec::with_capacity(n_pts);
+    // let mut bin_width_k_set: Vec<[f64;3]> = Vec::with_capacity(n_pts);
+    // let mut bin_width_q_set: Vec<[f64;3]> = Vec::with_capacity(n_pts);
+    // let mut num_ticks_n_set: Vec<usize> = Vec::with_capacity(n_pts);
+    // let mut num_ticks_k_set: Vec<usize> = Vec::with_capacity(n_pts);
+    // let mut num_ticks_q_set: Vec<usize> = Vec::with_capacity(n_pts);
+    // let mut entropys_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut entropys_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut entropys_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut exp_entropy_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut exp_entropy_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut exp_entropy_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut exp_entropy_mar_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut exp_entropy_mar_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut exp_entropy_mar_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut accuracy_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut accuracy_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut accuracy_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut resolution_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut resolution_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut resolution_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut activity_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut activity_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
+    // let mut activity_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
 
-    let mut accum = 0;
     // Run simulations
-    for (((&s, &lambda), &num_trajectories), &m) in vec_s.iter().zip(vec_lambda.iter()).zip(vec_num_trajectories.iter()).zip(vec_m.iter()) 
-    {
-        let gamma_p: f64 = gamma_z/s * nb;
-        let gamma_m: f64 = gamma_z/s * ( nb + 1.);
+    for (((&s, &lambda), &num_trajectories), &m) in vec_s.iter().zip(vec_lambda.iter()).zip(vec_num_trajectories.iter()).zip(vec_m.iter()) {
+        let gamma_p: f64 = gamma_z / s * nb;
+        let gamma_m: f64 = gamma_z / s * (nb + 1.0);
 
-        let config = SimulationConfig::new(dt, total_time, omega_c, beta, gamma_p, gamma_m, lambda, s, num_trajectories, m);
+        let config = SimulationConfig::new(
+            dt, total_time, omega_c, beta, gamma_p, gamma_m, lambda, s, num_trajectories, m,
+        );
 
         let results = run_quantum_simulation(&config)?;
 
-        // Store results
-        counts_n_set.push(results.counts_n);
-        counts_k_set.push(results.counts_k);
-        counts_q_set.push(results.counts_q);
-        bin_width_n_set.push(results.bin_width_n);
-        bin_width_k_set.push(results.bin_width_k);
-        bin_width_q_set.push(results.bin_width_q);
-        num_ticks_n_set .push(results.num_ticks_n);
-        num_ticks_k_set .push(results.num_ticks_k);
-        num_ticks_q_set .push(results.num_ticks_q);
-        entropys_tick_n_set.push(results.entropy_tick_n);
-        entropys_tick_k_set.push(results.entropy_tick_k);
-        entropys_tick_q_set.push(results.entropy_tick_q);
-        exp_entropy_tick_n_set.push(results.exp_entropy_tick_n);
-        exp_entropy_tick_k_set.push(results.exp_entropy_tick_k);
-        exp_entropy_tick_q_set.push(results.exp_entropy_tick_q);
-        exp_entropy_mar_n_set.push(results.exp_entropy_mar_n);
-        exp_entropy_mar_k_set.push(results.exp_entropy_mar_k);
-        exp_entropy_mar_q_set.push(results.exp_entropy_mar_q);
-        accuracy_n_set.push(results.accuracy_n);
-        accuracy_k_set.push(results.accuracy_k);
-        accuracy_q_set.push(results.accuracy_q);
-        resolution_n_set.push(results.resolution_n);
-        resolution_k_set.push(results.resolution_k);
-        resolution_q_set.push(results.resolution_q);
-        activity_tick_n_set.push(results.activity_tick_n);
-        activity_tick_k_set.push(results.activity_tick_k);
-        activity_tick_q_set.push(results.activity_tick_q);
-        accum += 1;
-        println!("{} / {}", accum , n_pts)
+        let filename = format!(
+            "results_s{:.2}_l{:.2}_n{}_m{}.txt",
+            s, lambda, num_trajectories, m
+        );
+
+        // Write results to file
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&filename)?;
+
+        writeln!(file, "counts_n: {:?}", results.counts_n)?;
+        writeln!(file, "counts_k: {:?}", results.counts_k)?;
+        writeln!(file, "counts_q: {:?}", results.counts_q)?;
+        writeln!(file, "bin_width_n: {:?}", results.bin_width_n)?;
+        writeln!(file, "bin_width_k: {:?}", results.bin_width_k)?;
+        writeln!(file, "bin_width_q: {:?}", results.bin_width_q)?;
+        writeln!(file, "num_ticks_n: {:?}", results.num_ticks_n)?;
+        writeln!(file, "num_ticks_k: {:?}", results.num_ticks_k)?;
+        writeln!(file, "num_ticks_q: {:?}", results.num_ticks_q)?;
+        writeln!(file, "entropy_tick_n: {}", results.entropy_tick_n)?;
+        writeln!(file, "entropy_tick_k: {}", results.entropy_tick_k)?;
+        writeln!(file, "entropy_tick_q: {}", results.entropy_tick_q)?;
+        writeln!(file, "exp_entropy_tick_n: {}", results.exp_entropy_tick_n)?;
+        writeln!(file, "exp_entropy_tick_k: {}", results.exp_entropy_tick_k)?;
+        writeln!(file, "exp_entropy_tick_q: {}", results.exp_entropy_tick_q)?;
+        writeln!(file, "exp_entropy_mar_n: {}", results.exp_entropy_mar_n)?;
+        writeln!(file, "exp_entropy_mar_k: {}", results.exp_entropy_mar_k)?;
+        writeln!(file, "exp_entropy_mar_q: {}", results.exp_entropy_mar_q)?;
+        writeln!(file, "accuracy_n: {}", results.accuracy_n)?;
+        writeln!(file, "accuracy_k: {}", results.accuracy_k)?;
+        writeln!(file, "accuracy_q: {}", results.accuracy_q)?;
+        writeln!(file, "resolution_n: {}", results.resolution_n)?;
+        writeln!(file, "resolution_k: {}", results.resolution_k)?;
+        writeln!(file, "resolution_q: {}", results.resolution_q)?;
+        writeln!(file, "activity_tick_n: {}", results.activity_tick_n)?;
+        writeln!(file, "activity_tick_k: {}", results.activity_tick_k)?;
+        writeln!(file, "activity_tick_q: {}", results.activity_tick_q)?;
+        writeln!(file, "-----------------------------------------------\n")?;
+
+        // // Store results as before
+        // counts_n_set.push(results.counts_n);
+        // counts_k_set.push(results.counts_k);
+        // counts_q_set.push(results.counts_q);
+        // bin_width_n_set.push(results.bin_width_n);
+        // bin_width_k_set.push(results.bin_width_k);
+        // bin_width_q_set.push(results.bin_width_q);
+        // num_ticks_n_set.push(results.num_ticks_n);
+        // num_ticks_k_set.push(results.num_ticks_k);
+        // num_ticks_q_set.push(results.num_ticks_q);
+        // entropys_tick_n_set.push(results.entropy_tick_n);
+        // entropys_tick_k_set.push(results.entropy_tick_k);
+        // entropys_tick_q_set.push(results.entropy_tick_q);
+        // exp_entropy_tick_n_set.push(results.exp_entropy_tick_n);
+        // exp_entropy_tick_k_set.push(results.exp_entropy_tick_k);
+        // exp_entropy_tick_q_set.push(results.exp_entropy_tick_q);
+        // exp_entropy_mar_n_set.push(results.exp_entropy_mar_n);
+        // exp_entropy_mar_k_set.push(results.exp_entropy_mar_k);
+        // exp_entropy_mar_q_set.push(results.exp_entropy_mar_q);
+        // accuracy_n_set.push(results.accuracy_n);
+        // accuracy_k_set.push(results.accuracy_k);
+        // accuracy_q_set.push(results.accuracy_q);
+        // resolution_n_set.push(results.resolution_n);
+        // resolution_k_set.push(results.resolution_k);
+        // resolution_q_set.push(results.resolution_q);
+        // activity_tick_n_set.push(results.activity_tick_n);
+        // activity_tick_k_set.push(results.activity_tick_k);
+        // activity_tick_q_set.push(results.activity_tick_q);
     }
 
     // plot_multiple_histogram(&counts_n_set, &bin_width_n_set, total_time, "Prueba.png")?;
 
-    println!("{:?}, {:?}", exp_entropy_tick_n_set, num_ticks_n_set);
-    println!("{:?}, {:?}", exp_entropy_tick_k_set, num_ticks_k_set);
-    println!("{:?}, {:?}", exp_entropy_tick_q_set, num_ticks_q_set);
+    // println!("{:?}", counts_n_set);
+    // println!("{:?}", bin_width_n_set);
 
-    println!("{:?}, {:?}", exp_entropy_mar_n_set, vec_num_trajectories);
-    println!("{:?}, {:?}", exp_entropy_mar_k_set, vec_num_trajectories);
-    println!("{:?}, {:?}", exp_entropy_mar_q_set, vec_num_trajectories);
+    // println!("{:?}, {:?}", exp_entropy_tick_n_set, num_ticks_n_set);
+    // println!("{:?}, {:?}", exp_entropy_tick_k_set, num_ticks_k_set);
+    // println!("{:?}, {:?}", exp_entropy_tick_q_set, num_ticks_q_set);
+
+    // println!("{:?}, {:?}", exp_entropy_mar_n_set, vec_num_trajectories);
+    // println!("{:?}, {:?}", exp_entropy_mar_k_set, vec_num_trajectories);
+    // println!("{:?}, {:?}", exp_entropy_mar_q_set, vec_num_trajectories);
 
     // plot_entropy_vs_n_traj(exp_entropy_tick_n_set, num_ticks_n_set, "entropy_vs_n_traj.png")?;
 
