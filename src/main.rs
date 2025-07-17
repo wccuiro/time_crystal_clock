@@ -605,10 +605,14 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, 
 
     let init_num_trajectories = 100_usize;
     let last_num_trajectories = 100000_usize;
+
+    let log_init = (init_num_trajectories as f64).ln();
+    let log_last = (last_num_trajectories as f64).ln();
+
     let vec_num_trajectories: Vec<usize> = (0..n_pts)
         .map(|i| {
             let t = i as f64 / (n_pts - 1) as f64;
-            (init_num_trajectories as f64 + t * (last_num_trajectories - init_num_trajectories) as f64) as usize
+            (log_init + t * (log_last - log_init)).exp().round() as usize
         })
         .collect();
 
@@ -673,6 +677,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let mut activity_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
     let mut activity_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
 
+    let mut accum = 0;
     // Run simulations
     for (((&s, &lambda), &num_trajectories), &m) in vec_s.iter().zip(vec_lambda.iter()).zip(vec_num_trajectories.iter()).zip(vec_m.iter()) 
     {
@@ -711,6 +716,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         activity_tick_n_set.push(results.activity_tick_n);
         activity_tick_k_set.push(results.activity_tick_k);
         activity_tick_q_set.push(results.activity_tick_q);
+        accum += 1;
+        println!("{} / {}", accum , n_pts)
     }
 
     // plot_multiple_histogram(&counts_n_set, &bin_width_n_set, total_time, "Prueba.png")?;
