@@ -104,6 +104,7 @@ fn inst_entropy(pi: &Array2<Complex64> , psi: &Array1<Complex64>, inst_n_m: usiz
 }
 
 fn simulate_trajectory(
+    idx: usize,
     gamma_p: f64,
     gamma_m: f64,
     s: f64,
@@ -197,6 +198,7 @@ fn simulate_trajectory(
             p_p = 1.;
 
             inst_n_p += 1;
+            println!("{},1,{},{},{},{},{}", idx, i as f64 * dt, psi[0].re, psi[0].im, psi[1].re, psi[1].im);
             
         } else if q >= p_m {
             let dpsi_j_m = l_minus.dot(&psi).mapv(|x| x / (amp_m.re).sqrt());
@@ -209,6 +211,7 @@ fn simulate_trajectory(
             p_m = 1.;
 
             inst_n_m += 1;
+            println!("{},0,{},{},{},{},{}", idx, i as f64 * dt, psi[0].re, psi[0].im, psi[1].re, psi[1].im);
 
         } else {
             // No jump, just evolve
@@ -467,7 +470,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
         f64, f64, f64) = 
         (0..num_trajectories)
             .into_par_iter()
-            .map(|_| simulate_trajectory(gamma_p, gamma_m, s, dt, total_time, betawc, m, &l_plus, &l_minus, &l_p_m, &l_m_p, &h_eff, &pi, &psi1, &psi2, &eigvals))
+            .map(|i| simulate_trajectory(i, gamma_p, gamma_m, s, dt, total_time, betawc, m, &l_plus, &l_minus, &l_p_m, &l_m_p, &h_eff, &pi, &psi1, &psi2, &eigvals))
             .filter(|(ticks_n, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| ticks_n.len() >= 2)
             .reduce(
                 || (
@@ -599,50 +602,35 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
     })
 }
 
-fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>, Vec<usize>, Vec<usize>) {
+fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
     let init_s = 50.0_f64;
     let last_s = 50.0_f64;
-    let vec_omega: Vec<f64> = (0..n_pts)
-        .map(|i| {
-            let t = i as f64 / (n_pts - 1) as f64;
-            init_s + t * (last_s - init_s)
-        })
-        .collect();
-
     let init_lambda = 2.0_f64;
     let last_lambda = 2.0_f64;
-    let vec_gamma: Vec<f64> = (0..n_pts)
-        .map(|i| {
-            let t = i as f64 / (n_pts - 1) as f64;
-            init_lambda + t * (last_lambda - init_lambda)
-        })
-        .collect();
 
-    let init_num_trajectories = 100_usize;
-    let last_num_trajectories = 100_usize;
+    let vec_omega: Vec<f64>;
+    let vec_gamma: Vec<f64>;
 
-    let log_init = (init_num_trajectories as f64).ln();
-    let log_last = (last_num_trajectories as f64).ln();
+    if n_pts == 1 {
+        vec_omega = vec![init_s];
+        vec_gamma = vec![init_lambda];
+    } else {
+        vec_omega = (0..n_pts)
+            .map(|i| {
+                let t = i as f64 / (n_pts - 1) as f64;
+                init_s + t * (last_s - init_s)
+            })
+            .collect();
 
-    let vec_num_trajectories: Vec<usize> = (0..n_pts)
-        .map(|i| {
-            let t = i as f64 / (n_pts - 1) as f64;
-            (log_init + t * (log_last - log_init)).exp().round() as usize
-        })
-        .collect();
+        vec_gamma = (0..n_pts)
+            .map(|i| {
+                let t = i as f64 / (n_pts - 1) as f64;
+                init_lambda + t * (last_lambda - init_lambda)
+            })
+            .collect();
+    }
 
-    let init_m = 5_usize;
-    let last_m = 5_usize;
-    // let vec_m: Vec<usize> = (0..n_pts)
-    //     .map(|i| {
-    //         let t = i as f64 / (n_pts - 1) as f64;
-    //         (init_m as f64 + t * (last_m - init_m) as f64) as usize
-    //     })
-    //     .collect();
-    
-    let vec_m: Vec<usize> = vec![355, 650, 705, 1100];      // Values for figure A2
-
-    (vec_omega, vec_gamma, vec_num_trajectories, vec_m)
+    (vec_omega, vec_gamma)
 }
 
 
@@ -652,51 +640,24 @@ use std::io::Write;
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
     let dt: f64 = 0.001;            // dt = 10-3 ~20 n_ticks and after that does not increase for a threshold of 1100 and beta 2.0
-    let total_time: f64 = 500.0;        // Total time 5000 set it to have an average of 20 n_ticks for a threshold of 1100 and beta 2.0
+    let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 n_ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 2.0 / omega_c; // Inverse temperature
+    let beta: f64 = 0.1 / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     
-    let n_pts = 4_usize;
+    let n_pts = 1_usize;
 
     // Generate parameter vectors
-    let (vec_s, vec_lambda, vec_num_trajectories, vec_m) = generate_parameter_vectors(n_pts);
+    let (vec_s, vec_lambda) = generate_parameter_vectors(n_pts);
 
-    println!("Running simulations with S: {:?}, lambda: {:?}, n_traj: {:?} and M: {:?}", vec_s, vec_lambda, vec_num_trajectories, vec_m);
-
-    // // Pre-allocate result vectors
-    // let mut counts_n_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
-    // let mut counts_k_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
-    // let mut counts_q_set: Vec<Vec<f64>> = Vec::with_capacity(n_pts);
-    // let mut bin_width_n_set: Vec<[f64;3]> = Vec::with_capacity(n_pts);
-    // let mut bin_width_k_set: Vec<[f64;3]> = Vec::with_capacity(n_pts);
-    // let mut bin_width_q_set: Vec<[f64;3]> = Vec::with_capacity(n_pts);
-    // let mut num_ticks_n_set: Vec<usize> = Vec::with_capacity(n_pts);
-    // let mut num_ticks_k_set: Vec<usize> = Vec::with_capacity(n_pts);
-    // let mut num_ticks_q_set: Vec<usize> = Vec::with_capacity(n_pts);
-    // let mut entropys_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut entropys_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut entropys_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut exp_entropy_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut exp_entropy_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut exp_entropy_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut exp_entropy_mar_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut exp_entropy_mar_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut exp_entropy_mar_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut accuracy_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut accuracy_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut accuracy_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut resolution_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut resolution_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut resolution_q_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut activity_tick_n_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut activity_tick_k_set: Vec<f64> = Vec::with_capacity(n_pts);
-    // let mut activity_tick_q_set: Vec<f64> = Vec::with_capacity(n_pts);
+    println!("Running simulations with S: {:?}, lambda: {:?}", vec_s, vec_lambda);
 
     // Run simulations
-    for (((&s, &lambda), &num_trajectories), &m) in vec_s.iter().zip(vec_lambda.iter()).zip(vec_num_trajectories.iter()).zip(vec_m.iter()) {
+    for (&s, &lambda) in vec_s.iter().zip(vec_lambda.iter()) {
+        let num_trajectories = 100000;
+        let m = 5;
         let gamma_p: f64 = gamma_z / s * nb;
         let gamma_m: f64 = gamma_z / s * (nb + 1.0);
 
