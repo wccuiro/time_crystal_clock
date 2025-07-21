@@ -152,13 +152,7 @@ fn simulate_trajectory(
     psi2: &Array1<Complex64>,
     eigvals: &Array1<f64>,
     writer: &mut dyn Write,
-) -> Result<(
-    Vec<f64>, Vec<f64>, Vec<f64>,
-    f64, f64, f64,
-    f64, f64, f64,
-    f64, f64, f64,
-    f64, f64, f64
-    ), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut rng = rand::thread_rng();
     let i = if rng.gen::<f64>() < eigvals[0] { 0 } else { 1 };
     let mut psi;
@@ -173,17 +167,17 @@ fn simulate_trajectory(
         psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
     }
 
-    let mut ticks_n = Vec::new();
-    let mut ticks_k = Vec::new();
-    let mut ticks_q = Vec::new();
+    // let mut ticks_n = Vec::new();
+    // let mut ticks_k = Vec::new();
+    // let mut ticks_q = Vec::new();
     
     let mut last_tick_n = 0.0;
     let mut last_tick_k = 0.0;
     let mut last_tick_q = 0.0;
 
-    let mut activity_tick_n = Vec::new();
-    let mut activity_tick_k = Vec::new();
-    let mut activity_tick_q = Vec::new();
+    // let mut activity_tick_n = Vec::new();
+    // let mut activity_tick_k = Vec::new();
+    // let mut activity_tick_q = Vec::new();
 
     let mut last_activity_n = 0;
     let mut last_activity_k = 0;
@@ -192,9 +186,9 @@ fn simulate_trajectory(
     let mut inst_n_m = 0; 
     let mut inst_n_p = 0;
 
-    let mut entropys_tick_n = Vec::new();
-    let mut entropys_tick_k = Vec::new();
-    let mut entropys_tick_q = Vec::new();
+    // let mut entropys_tick_n = Vec::new();
+    // let mut entropys_tick_k = Vec::new();
+    // let mut entropys_tick_q = Vec::new();
 
     let mut inst_s_n = inst_entropy(&pi , &psi, inst_n_m, inst_n_p, betawc);
     let mut inst_s_k = inst_s_n;
@@ -263,43 +257,43 @@ fn simulate_trajectory(
             psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
         }
 
-        if inst_n_m >= (ticks_n.len()+1) * m {
-            // println!("{} >= {}, where {}", inst_n_m, (ticks_n.len()+1) * m, ticks_n.len());
+        // if inst_n_m >= (ticks_n.len()+1) * m {
+        //     // println!("{} >= {}, where {}", inst_n_m, (ticks_n.len()+1) * m, ticks_n.len());
 
-            ticks_n.push(i as f64 * dt - last_tick_n);
-            last_tick_n = i as f64 * dt;
+        //     ticks_n.push(i as f64 * dt - last_tick_n);
+        //     last_tick_n = i as f64 * dt;
 
-            entropys_tick_n.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_n);
-            inst_s_n = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
+        //     entropys_tick_n.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_n);
+        //     inst_s_n = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
             
-            activity_tick_n.push((inst_n_m + inst_n_p) - last_activity_n);
-            last_activity_n = inst_n_m + inst_n_p;
+        //     activity_tick_n.push((inst_n_m + inst_n_p) - last_activity_n);
+        //     last_activity_n = inst_n_m + inst_n_p;
 
-        } 
+        // } 
 
-        if (inst_n_m + inst_n_p) >= (ticks_k.len()+1) * m {
-            ticks_k.push(i as f64 * dt - last_tick_k);
-            last_tick_k = i as f64 * dt;
+        // if (inst_n_m + inst_n_p) >= (ticks_k.len()+1) * m {
+        //     ticks_k.push(i as f64 * dt - last_tick_k);
+        //     last_tick_k = i as f64 * dt;
 
-            entropys_tick_k.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_k);
-            inst_s_k = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
+        //     entropys_tick_k.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_k);
+        //     inst_s_k = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
 
-            activity_tick_k.push((inst_n_m + inst_n_p) - last_activity_k);
-            last_activity_k = inst_n_m + inst_n_p;            
+        //     activity_tick_k.push((inst_n_m + inst_n_p) - last_activity_k);
+        //     last_activity_k = inst_n_m + inst_n_p;            
 
-        }
+        // }
 
-        if (inst_n_m as i32 - inst_n_p as i32) >= ((ticks_q.len()+1) * m) as i32 {
-            ticks_q.push(i as f64 * dt - last_tick_q);
-            last_tick_q = i as f64 * dt;
+        // if (inst_n_m as i32 - inst_n_p as i32) >= ((ticks_q.len()+1) * m) as i32 {
+        //     ticks_q.push(i as f64 * dt - last_tick_q);
+        //     last_tick_q = i as f64 * dt;
             
-            entropys_tick_q.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_q);
-            inst_s_q = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
+        //     entropys_tick_q.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_q);
+        //     inst_s_q = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
             
-            activity_tick_q.push((inst_n_m + inst_n_p) - last_activity_q);
-            last_activity_q = inst_n_m + inst_n_p;
+        //     activity_tick_q.push((inst_n_m + inst_n_p) - last_activity_q);
+        //     last_activity_q = inst_n_m + inst_n_p;
             
-        }
+        // }
         
         p_m *= 1.0 - prob_m;
         p_p *= 1.0 - prob_p;
@@ -308,41 +302,37 @@ fn simulate_trajectory(
 
     // println!("{}, {}, {}", ticks_n.len(), ticks_k.len(), ticks_q.len());
 
-    let ticks_n = ticks_n[1..].to_vec();
-    let ticks_k = ticks_k[1..].to_vec();
-    let ticks_q = ticks_q[1..].to_vec();
+    // let ticks_n = ticks_n[1..].to_vec();
+    // let ticks_k = ticks_k[1..].to_vec();
+    // let ticks_q = ticks_q[1..].to_vec();
 
-    let activity_tick_n: Array1<usize> = Array1::from(activity_tick_n[1..].to_vec());
-    let activity_tick_k: Array1<usize> = Array1::from(activity_tick_k[1..].to_vec());
-    let activity_tick_q: Array1<usize> = Array1::from(activity_tick_q[1..].to_vec());
+    // let activity_tick_n: Array1<usize> = Array1::from(activity_tick_n[1..].to_vec());
+    // let activity_tick_k: Array1<usize> = Array1::from(activity_tick_k[1..].to_vec());
+    // let activity_tick_q: Array1<usize> = Array1::from(activity_tick_q[1..].to_vec());
     
-    let exp_entropy_mar_n: f64 = (-entropys_tick_n[0]).exp();
-    let exp_entropy_mar_k: f64 = (-entropys_tick_k[0]).exp();
-    let exp_entropy_mar_q: f64 = (-entropys_tick_q[0]).exp();
+    // let exp_entropy_mar_n: f64 = (-entropys_tick_n[0]).exp();
+    // let exp_entropy_mar_k: f64 = (-entropys_tick_k[0]).exp();
+    // let exp_entropy_mar_q: f64 = (-entropys_tick_q[0]).exp();
 
-    let entropy_tick_n: Array1<f64> = Array1::from(entropys_tick_n[1..].to_vec());
-    let entropy_tick_k: Array1<f64> = Array1::from(entropys_tick_k[1..].to_vec());
-    let entropy_tick_q: Array1<f64> = Array1::from(entropys_tick_q[1..].to_vec());
+    // let entropy_tick_n: Array1<f64> = Array1::from(entropys_tick_n[1..].to_vec());
+    // let entropy_tick_k: Array1<f64> = Array1::from(entropys_tick_k[1..].to_vec());
+    // let entropy_tick_q: Array1<f64> = Array1::from(entropys_tick_q[1..].to_vec());
     
 
-    // Computing cumulative results insead of vectors
-    let activity_tick_n_sum: f64 = activity_tick_n.iter().sum::<usize>() as f64;
-    let activity_tick_k_sum: f64 = activity_tick_k.iter().sum::<usize>() as f64;
-    let activity_tick_q_sum: f64 = activity_tick_q.iter().sum::<usize>() as f64;
+    // // Computing cumulative results insead of vectors
+    // let activity_tick_n_sum: f64 = activity_tick_n.iter().sum::<usize>() as f64;
+    // let activity_tick_k_sum: f64 = activity_tick_k.iter().sum::<usize>() as f64;
+    // let activity_tick_q_sum: f64 = activity_tick_q.iter().sum::<usize>() as f64;
 
-    let entropy_tick_n_sum: f64 = entropy_tick_n.iter().sum();
-    let entropy_tick_k_sum: f64 = entropy_tick_k.iter().sum();
-    let entropy_tick_q_sum: f64 = entropy_tick_q.iter().sum();
+    // let entropy_tick_n_sum: f64 = entropy_tick_n.iter().sum();
+    // let entropy_tick_k_sum: f64 = entropy_tick_k.iter().sum();
+    // let entropy_tick_q_sum: f64 = entropy_tick_q.iter().sum();
 
-    let exp_entropy_tick_n_sum = entropy_tick_n.mapv(|e| (-e).exp()).sum();
-    let exp_entropy_tick_k_sum = entropy_tick_k.mapv(|e| (-e).exp()).sum();
-    let exp_entropy_tick_q_sum = entropy_tick_q.mapv(|e| (-e).exp()).sum();
+    // let exp_entropy_tick_n_sum = entropy_tick_n.mapv(|e| (-e).exp()).sum();
+    // let exp_entropy_tick_k_sum = entropy_tick_k.mapv(|e| (-e).exp()).sum();
+    // let exp_entropy_tick_q_sum = entropy_tick_q.mapv(|e| (-e).exp()).sum();
 
-    Ok((ticks_n, ticks_k, ticks_q, 
-        activity_tick_n_sum, activity_tick_k_sum, activity_tick_q_sum,
-        entropy_tick_n_sum, entropy_tick_k_sum, entropy_tick_q_sum,
-        exp_entropy_tick_n_sum, exp_entropy_tick_k_sum, exp_entropy_tick_q_sum,
-        exp_entropy_mar_n, exp_entropy_mar_k, exp_entropy_mar_q))
+    Ok(())
     //  activity_tick_n, activity_tick_k, activity_tick_q,
     //  entropy_tick_n, entropy_tick_k, entropy_tick_q,
 }
@@ -483,7 +473,7 @@ fn open_compressed_writer(path: &str) -> Result<Encoder<'static, File>, Box<dyn 
 }
 
 /// Run a complete quantum jump simulation for given parameters
-fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults, Box<dyn std::error::Error>> {
+fn run_quantum_simulation(config: &SimulationConfig) -> Result<(), Box<dyn std::error::Error>> {
     
     let dt = config.dt;
     let total_time = config.total_time;
@@ -511,183 +501,152 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
 
         
     // 2) Phase 1: simulate in parallel, updating the bar
-    let (waits_n, waits_k, waits_q, 
-        activities_n_sum, activities_k_sum, activities_q_sum,
-        entropies_n_sum, entropies_k_sum, entropies_q_sum,
-        exp_entropies_n_sum, exp_entropies_k_sum, exp_entropies_q_sum,
-        entropies_mar_n, entropies_mar_k, entropies_mar_q): 
-        (Vec<f64>, Vec<f64>, Vec<f64>, 
-        f64, f64, f64,
-        f64, f64, f64,
-        f64, f64, f64,
-        f64, f64, f64) = 
-        (0..num_trajectories)
-            .into_par_iter()
-            .filter_map(|i| {
-                // 1) make subfolder
-                let subdir = format!("output/{:05}", i / 1_000);
-                fs::create_dir_all(&subdir).ok()?;
-                
-                // 2) open per-trajectory .zst
-                let path = format!("{}/traj_{:05}.zst", subdir, i);
-                let file = File::create(&path).ok()?;
-                let mut encoder = Encoder::new(file, 3).ok()?;
-                
-                // Coerce encoder to a dyn Write trait object
-                let writer: &mut dyn Write = &mut encoder;
-                
-                // 3) simulate & write jumps
-                let result = simulate_trajectory(
-                    i,
-                    gamma_p, gamma_m, s, dt, total_time, betawc, m,
-                    &l_plus, &l_minus, &l_p_m, &l_m_p,
-                    &h_eff, &pi, &psi1, &psi2, &eigvals,
-                    &mut encoder,
-                ).ok()?;
+    (0..num_trajectories)
+        .into_par_iter()
+        .for_each(|i| {
+            // 1) make subfolder
+            let subdir = format!("l{}_s{}/{:05}", lambda, s, i / 1_000);
+            if fs::create_dir_all(&subdir).is_err() {
+                return;
+            }
 
-                encoder.finish().ok()?;
+            // 2) open per-trajectory .zst
+            let path = format!("{}/traj_{:05}.zst", subdir, i);
+            let file = match File::create(&path) {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+            let mut encoder = match Encoder::new(file, 3) {
+                Ok(e) => e,
+                Err(_) => return,
+            };
 
-                if result.0.len() >= 2 {
-                    Some(result)
-                } else {
-                    None
-                }
-            })
-            .reduce(
-                || (
-                    Vec::new(), Vec::new(), Vec::new(), // waits_n, waits_k, waits_q
-                    0.0, 0.0, 0.0,         // activities_n_sum, activities_k_sum, activities_q_sum
-                    0.0, 0.0, 0.0,         // entropies_n_sum, entropies_k_sum, entropies_q_sum
-                    0.0, 0.0, 0.0,         // exp_entropies_n_sum, exp_entropies_k_sum, exp_entropies_q_sum
-                    0.0, 0.0, 0.0          // entropies_mar_n, entropies_mar_k, entropies_mar_q
-                ),
-                |mut acc, x| {
-                    acc.0 = x.0;// acc.0.extend(x.0);  // waits_n - flatten Array1 to Vec
-                    acc.0 = x.1;// acc.1.extend(x.1);  // waits_k - flatten Array1 to Vec
-                    acc.0 = x.2; // acc.2.extend(x.2);  // waits_q - flatten Array1 to Vec
-                    acc.3 += x.3;  // activities_n_sum
-                    acc.4 += x.4;  // activities_k_sum
-                    acc.5 += x.5;  // activities_q_sum
-                    acc.6 += x.6;  // entropies_n_sum
-                    acc.7 += x.7;  // entropies_k_sum
-                    acc.8 += x.8;  // entropies_q_sum
-                    acc.9 += x.9;  // exp_entropies_n_sum
-                    acc.10 += x.10; // exp_entropies_k_sum
-                    acc.11 += x.11; // exp_entropies_q_sum
-                    acc.12 += x.12; // entropies_mar_n
-                    acc.13 += x.13; // entropies_mar_k
-                    acc.14 += x.14; // entropies_mar_q
-                    acc
-                }
-            );
+            // Coerce encoder to a dyn Write trait object
+            let writer: &mut dyn Write = &mut encoder;
 
-    let mean_act_n = activities_n_sum / waits_n.len() as f64; // Mean of entropies
-    let mean_ent_n = entropies_n_sum/waits_n.len() as f64; // Mean of entropies
-    let mean_exp_entropy_tick_n = exp_entropies_n_sum / waits_n.len() as f64;
-    let mean_exp_entropy_mar_n = entropies_mar_n / num_trajectories as f64;
+            // 3) simulate & write jumps
+            if simulate_trajectory(
+                i,
+                gamma_p, gamma_m, s, dt, total_time, betawc, m,
+                &l_plus, &l_minus, &l_p_m, &l_m_p,
+                &h_eff, &pi, &psi1, &psi2, &eigvals,
+                writer,
+            ).is_err() {
+                return;
+            }
+
+            let _ = encoder.finish();
+        });
+
+    // let mean_act_n = activities_n_sum / waits_n.len() as f64; // Mean of entropies
+    // let mean_ent_n = entropies_n_sum/waits_n.len() as f64; // Mean of entropies
+    // let mean_exp_entropy_tick_n = exp_entropies_n_sum / waits_n.len() as f64;
+    // let mean_exp_entropy_mar_n = entropies_mar_n / num_trajectories as f64;
 
 
-    let mean_act_k = activities_k_sum / waits_k.len() as f64; // Mean of entropies
-    let mean_ent_k = entropies_k_sum / waits_k.len() as f64; // Mean of entropies
-    let mean_exp_entropy_tick_k = exp_entropies_k_sum / waits_k.len() as f64;
-    let mean_exp_entropy_mar_k = entropies_mar_k / num_trajectories as f64;
+    // let mean_act_k = activities_k_sum / waits_k.len() as f64; // Mean of entropies
+    // let mean_ent_k = entropies_k_sum / waits_k.len() as f64; // Mean of entropies
+    // let mean_exp_entropy_tick_k = exp_entropies_k_sum / waits_k.len() as f64;
+    // let mean_exp_entropy_mar_k = entropies_mar_k / num_trajectories as f64;
 
 
-    let mean_act_q = activities_q_sum / waits_q.len() as f64; // Mean of entropies
-    let mean_ent_q = entropies_q_sum / waits_q.len() as f64; // Mean of entropies
-    let mean_exp_entropy_tick_q = exp_entropies_q_sum / waits_q.len() as f64;
-    let mean_exp_entropy_mar_q = entropies_mar_q / num_trajectories as f64;
+    // let mean_act_q = activities_q_sum / waits_q.len() as f64; // Mean of entropies
+    // let mean_ent_q = entropies_q_sum / waits_q.len() as f64; // Mean of entropies
+    // let mean_exp_entropy_tick_q = exp_entropies_q_sum / waits_q.len() as f64;
+    // let mean_exp_entropy_mar_q = entropies_mar_q / num_trajectories as f64;
 
 
-    // Compute accuracies and resolutions
-    let mean_waits_n = waits_n.iter().copied().sum::<f64>() / waits_n.len() as f64;
-    let var_waits_n = waits_n.iter().map(|x| (x - mean_waits_n).powi(2)).sum::<f64>() / (waits_n.len() as f64 - 1.0);
-    let accuracy_n = mean_waits_n.powi(2) / var_waits_n; 
-    let resolution_n = 1.0 / mean_waits_n;
+    // // Compute accuracies and resolutions
+    // let mean_waits_n = waits_n.iter().copied().sum::<f64>() / waits_n.len() as f64;
+    // let var_waits_n = waits_n.iter().map(|x| (x - mean_waits_n).powi(2)).sum::<f64>() / (waits_n.len() as f64 - 1.0);
+    // let accuracy_n = mean_waits_n.powi(2) / var_waits_n; 
+    // let resolution_n = 1.0 / mean_waits_n;
 
-    let mean_waits_k = waits_k.iter().copied().sum::<f64>() / waits_k.len() as f64;
-    let var_waits_k = waits_k.iter().map(|x| (x - mean_waits_k).powi(2)).sum::<f64>() / (waits_k.len() as f64 - 1.0);
-    let accuracy_k = mean_waits_k.powi(2) / var_waits_k; 
-    let resolution_k = 1.0 / mean_waits_k;
+    // let mean_waits_k = waits_k.iter().copied().sum::<f64>() / waits_k.len() as f64;
+    // let var_waits_k = waits_k.iter().map(|x| (x - mean_waits_k).powi(2)).sum::<f64>() / (waits_k.len() as f64 - 1.0);
+    // let accuracy_k = mean_waits_k.powi(2) / var_waits_k; 
+    // let resolution_k = 1.0 / mean_waits_k;
 
-    let mean_waits_q = waits_q.iter().copied().sum::<f64>() / waits_q.len() as f64;
-    let var_waits_q = waits_q.iter().map(|x| (x - mean_waits_q).powi(2)).sum::<f64>() / (waits_q.len() as f64 - 1.0);
-    let accuracy_q = mean_waits_q.powi(2) / var_waits_q;  
-    let resolution_q = 1.0 / mean_waits_q;
+    // let mean_waits_q = waits_q.iter().copied().sum::<f64>() / waits_q.len() as f64;
+    // let var_waits_q = waits_q.iter().map(|x| (x - mean_waits_q).powi(2)).sum::<f64>() / (waits_q.len() as f64 - 1.0);
+    // let accuracy_q = mean_waits_q.powi(2) / var_waits_q;  
+    // let resolution_q = 1.0 / mean_waits_q;
 
-    // --- 2. Sort the waiting times ---
-    let mut sorted_waits_n = waits_n;
-    let mut sorted_waits_k = waits_k;
-    let mut sorted_waits_q = waits_q;
+    // // --- 2. Sort the waiting times ---
+    // let mut sorted_waits_n = waits_n;
+    // let mut sorted_waits_k = waits_k;
+    // let mut sorted_waits_q = waits_q;
 
-    sorted_waits_n.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    sorted_waits_k.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    sorted_waits_q.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // sorted_waits_n.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // sorted_waits_k.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // sorted_waits_q.sort_by(|a, b| a.partial_cmp(b).unwrap());
     
-    // --- 3. Compute bin width using IQR rule ---
-    let bw_n = bin_width(&sorted_waits_n);
-    let bw_k = bin_width(&sorted_waits_k);
-    let bw_q = bin_width(&sorted_waits_q);
+    // // --- 3. Compute bin width using IQR rule ---
+    // let bw_n = bin_width(&sorted_waits_n);
+    // let bw_k = bin_width(&sorted_waits_k);
+    // let bw_q = bin_width(&sorted_waits_q);
     
-    // --- 4. Determine range ---
-    let min_n = *sorted_waits_n.first().unwrap_or(&0.0);
-    let max_n = *sorted_waits_n.last().unwrap_or(&1.0);
+    // // --- 4. Determine range ---
+    // let min_n = *sorted_waits_n.first().unwrap_or(&0.0);
+    // let max_n = *sorted_waits_n.last().unwrap_or(&1.0);
     
-    let min_k = *sorted_waits_k.first().unwrap_or(&0.0);
-    let max_k = *sorted_waits_k.last().unwrap_or(&1.0);
+    // let min_k = *sorted_waits_k.first().unwrap_or(&0.0);
+    // let max_k = *sorted_waits_k.last().unwrap_or(&1.0);
 
-    let min_q = *sorted_waits_q.first().unwrap_or(&0.0);
-    let max_q = *sorted_waits_q.last().unwrap_or(&1.0);
+    // let min_q = *sorted_waits_q.first().unwrap_or(&0.0);
+    // let max_q = *sorted_waits_q.last().unwrap_or(&1.0);
 
-    // println!("{}, {}", min_n, max_n);
-    // println!("{}, {}", min_k, max_k);
-    // println!("{}, {}", min_q, max_q);
+    // // println!("{}, {}", min_n, max_n);
+    // // println!("{}, {}", min_k, max_k);
+    // // println!("{}, {}", min_q, max_q);
 
-    // --- 5. Count frequencies per bin ---
-    let counts_n = counts_per_bin(&sorted_waits_n, bw_n, min_n, max_n);
-    let counts_k = counts_per_bin(&sorted_waits_k, bw_n, min_k, max_k);
-    let counts_q = counts_per_bin(&sorted_waits_q, bw_n, min_q, max_q);
+    // // --- 5. Count frequencies per bin ---
+    // let counts_n = counts_per_bin(&sorted_waits_n, bw_n, min_n, max_n);
+    // let counts_k = counts_per_bin(&sorted_waits_k, bw_n, min_k, max_k);
+    // let counts_q = counts_per_bin(&sorted_waits_q, bw_n, min_q, max_q);
     
-    // --- 6. Plot histogram ---
-    // let filename = format!("WTD-histogram__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
-    // plot_histogram(&counts_n, bw_n, min, max, &filename)?;
+    // // --- 6. Plot histogram ---
+    // // let filename = format!("WTD-histogram__m-{}_omega_c-{}_dt-{}_tmax-{}_ntraj-{}.png", m, omega_c, dt, total_time, num_trajectories);
+    // // plot_histogram(&counts_n, bw_n, min, max, &filename)?;
 
-    Ok(SimulationResults {
-        counts_n: counts_n,
-        counts_k: counts_k,
-        counts_q: counts_q,
-        bin_width_n: [bw_n, min_n, max_n],
-        bin_width_k: [bw_k, min_k, max_k],
-        bin_width_q: [bw_q, min_q, max_q],
-        num_ticks_n: sorted_waits_n.len(),
-        num_ticks_k: sorted_waits_k.len(),
-        num_ticks_q: sorted_waits_q.len(),
-        entropy_tick_n: mean_ent_n,
-        entropy_tick_k: mean_ent_k,
-        entropy_tick_q: mean_ent_q,
-        exp_entropy_tick_n: mean_exp_entropy_tick_n,
-        exp_entropy_tick_k: mean_exp_entropy_tick_k,
-        exp_entropy_tick_q: mean_exp_entropy_tick_q,
-        exp_entropy_mar_n: mean_exp_entropy_mar_n, 
-        exp_entropy_mar_k: mean_exp_entropy_mar_k, 
-        exp_entropy_mar_q: mean_exp_entropy_mar_q, 
-        accuracy_n: accuracy_n,
-        accuracy_k: accuracy_k,
-        accuracy_q: accuracy_q,
-        resolution_n: resolution_n,
-        resolution_k: resolution_k,
-        resolution_q: resolution_q,
-        activity_tick_n: mean_act_n,
-        activity_tick_k: mean_act_k,
-        activity_tick_q: mean_act_q,
-    })
+    // Ok(SimulationResults {
+    //     counts_n: counts_n,
+    //     counts_k: counts_k,
+    //     counts_q: counts_q,
+    //     bin_width_n: [bw_n, min_n, max_n],
+    //     bin_width_k: [bw_k, min_k, max_k],
+    //     bin_width_q: [bw_q, min_q, max_q],
+    //     num_ticks_n: sorted_waits_n.len(),
+    //     num_ticks_k: sorted_waits_k.len(),
+    //     num_ticks_q: sorted_waits_q.len(),
+    //     entropy_tick_n: mean_ent_n,
+    //     entropy_tick_k: mean_ent_k,
+    //     entropy_tick_q: mean_ent_q,
+    //     exp_entropy_tick_n: mean_exp_entropy_tick_n,
+    //     exp_entropy_tick_k: mean_exp_entropy_tick_k,
+    //     exp_entropy_tick_q: mean_exp_entropy_tick_q,
+    //     exp_entropy_mar_n: mean_exp_entropy_mar_n, 
+    //     exp_entropy_mar_k: mean_exp_entropy_mar_k, 
+    //     exp_entropy_mar_q: mean_exp_entropy_mar_q, 
+    //     accuracy_n: accuracy_n,
+    //     accuracy_k: accuracy_k,
+    //     accuracy_q: accuracy_q,
+    //     resolution_n: resolution_n,
+    //     resolution_k: resolution_k,
+    //     resolution_q: resolution_q,
+    //     activity_tick_n: mean_act_n,
+    //     activity_tick_k: mean_act_k,
+    //     activity_tick_q: mean_act_q,
+    // })
+
+    Ok(())
 }
 
 fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
     let init_s = 50.0_f64;
     let last_s = 50.0_f64;
-    let init_lambda = 2.0_f64;
-    let last_lambda = 2.0_f64;
+    let init_lambda = 0.0_f64;
+    let last_lambda = 4.0_f64;
 
     let vec_omega: Vec<f64>;
     let vec_gamma: Vec<f64>;
@@ -723,12 +682,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let dt: f64 = 0.001;            // dt = 10-3 ~20 n_ticks and after that does not increase for a threshold of 1100 and beta 2.0
     let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 n_ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
-    let beta: f64 = 0.1 / omega_c; // Inverse temperature
+    let beta: f64 = 2.0 / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     
-    let n_pts = 1_usize;
+    let n_pts = 20_usize;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda) = generate_parameter_vectors(n_pts);
@@ -737,7 +696,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     // Run simulations
     for (&s, &lambda) in vec_s.iter().zip(vec_lambda.iter()) {
-        let num_trajectories = 100000;
+        let num_trajectories = 1000 ;
         let m = 5;
         let gamma_p: f64 = gamma_z / s * nb;
         let gamma_m: f64 = gamma_z / s * (nb + 1.0);
@@ -746,47 +705,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
             dt, total_time, omega_c, beta, gamma_p, gamma_m, lambda, s, num_trajectories, m,
         );
 
-        let results = run_quantum_simulation(&config)?;
+        run_quantum_simulation(&config)?;
+        
+        // let results = 
 
-        let filename = format!(
-            "results_s{:.2}_l{:.2}_n{}_m{}.txt",
-            s, lambda, num_trajectories, m
-        );
+        // let filename = format!(
+        //     "results_s{:.2}_l{:.2}_n{}_m{}.txt",
+        //     s, lambda, num_trajectories, m
+        // );
 
-        // Write results to file
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&filename)?;
+        // // Write results to file
+        // let mut file = OpenOptions::new()
+        //     .create(true)
+        //     .append(true)
+        //     .open(&filename)?;
 
-        writeln!(file, "counts_n: {:?}", results.counts_n)?;
-        writeln!(file, "counts_k: {:?}", results.counts_k)?;
-        writeln!(file, "counts_q: {:?}", results.counts_q)?;
-        writeln!(file, "bin_width_n: {:?}", results.bin_width_n)?;
-        writeln!(file, "bin_width_k: {:?}", results.bin_width_k)?;
-        writeln!(file, "bin_width_q: {:?}", results.bin_width_q)?;
-        writeln!(file, "num_ticks_n: {:?}", results.num_ticks_n)?;
-        writeln!(file, "num_ticks_k: {:?}", results.num_ticks_k)?;
-        writeln!(file, "num_ticks_q: {:?}", results.num_ticks_q)?;
-        writeln!(file, "entropy_tick_n: {}", results.entropy_tick_n)?;
-        writeln!(file, "entropy_tick_k: {}", results.entropy_tick_k)?;
-        writeln!(file, "entropy_tick_q: {}", results.entropy_tick_q)?;
-        writeln!(file, "exp_entropy_tick_n: {}", results.exp_entropy_tick_n)?;
-        writeln!(file, "exp_entropy_tick_k: {}", results.exp_entropy_tick_k)?;
-        writeln!(file, "exp_entropy_tick_q: {}", results.exp_entropy_tick_q)?;
-        writeln!(file, "exp_entropy_mar_n: {}", results.exp_entropy_mar_n)?;
-        writeln!(file, "exp_entropy_mar_k: {}", results.exp_entropy_mar_k)?;
-        writeln!(file, "exp_entropy_mar_q: {}", results.exp_entropy_mar_q)?;
-        writeln!(file, "accuracy_n: {}", results.accuracy_n)?;
-        writeln!(file, "accuracy_k: {}", results.accuracy_k)?;
-        writeln!(file, "accuracy_q: {}", results.accuracy_q)?;
-        writeln!(file, "resolution_n: {}", results.resolution_n)?;
-        writeln!(file, "resolution_k: {}", results.resolution_k)?;
-        writeln!(file, "resolution_q: {}", results.resolution_q)?;
-        writeln!(file, "activity_tick_n: {}", results.activity_tick_n)?;
-        writeln!(file, "activity_tick_k: {}", results.activity_tick_k)?;
-        writeln!(file, "activity_tick_q: {}", results.activity_tick_q)?;
-        writeln!(file, "-----------------------------------------------\n")?;
+        // writeln!(file, "counts_n: {:?}", results.counts_n)?;
+        // writeln!(file, "counts_k: {:?}", results.counts_k)?;
+        // writeln!(file, "counts_q: {:?}", results.counts_q)?;
+        // writeln!(file, "bin_width_n: {:?}", results.bin_width_n)?;
+        // writeln!(file, "bin_width_k: {:?}", results.bin_width_k)?;
+        // writeln!(file, "bin_width_q: {:?}", results.bin_width_q)?;
+        // writeln!(file, "num_ticks_n: {:?}", results.num_ticks_n)?;
+        // writeln!(file, "num_ticks_k: {:?}", results.num_ticks_k)?;
+        // writeln!(file, "num_ticks_q: {:?}", results.num_ticks_q)?;
+        // writeln!(file, "entropy_tick_n: {}", results.entropy_tick_n)?;
+        // writeln!(file, "entropy_tick_k: {}", results.entropy_tick_k)?;
+        // writeln!(file, "entropy_tick_q: {}", results.entropy_tick_q)?;
+        // writeln!(file, "exp_entropy_tick_n: {}", results.exp_entropy_tick_n)?;
+        // writeln!(file, "exp_entropy_tick_k: {}", results.exp_entropy_tick_k)?;
+        // writeln!(file, "exp_entropy_tick_q: {}", results.exp_entropy_tick_q)?;
+        // writeln!(file, "exp_entropy_mar_n: {}", results.exp_entropy_mar_n)?;
+        // writeln!(file, "exp_entropy_mar_k: {}", results.exp_entropy_mar_k)?;
+        // writeln!(file, "exp_entropy_mar_q: {}", results.exp_entropy_mar_q)?;
+        // writeln!(file, "accuracy_n: {}", results.accuracy_n)?;
+        // writeln!(file, "accuracy_k: {}", results.accuracy_k)?;
+        // writeln!(file, "accuracy_q: {}", results.accuracy_q)?;
+        // writeln!(file, "resolution_n: {}", results.resolution_n)?;
+        // writeln!(file, "resolution_k: {}", results.resolution_k)?;
+        // writeln!(file, "resolution_q: {}", results.resolution_q)?;
+        // writeln!(file, "activity_tick_n: {}", results.activity_tick_n)?;
+        // writeln!(file, "activity_tick_k: {}", results.activity_tick_k)?;
+        // writeln!(file, "activity_tick_q: {}", results.activity_tick_q)?;
+        // writeln!(file, "-----------------------------------------------\n")?;
 
         // // Store results as before
         // counts_n_set.push(results.counts_n);
