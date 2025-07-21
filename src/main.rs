@@ -5,6 +5,36 @@ use rand::Rng;
 
 use rayon::prelude::*;
 
+use byteorder::{WriteBytesExt, LittleEndian};
+use std::io::Write;
+
+
+#[derive(Debug)]
+struct JumpEvent {
+    idx: u32,
+    jump_type: u8, // 0 = m, 1 = p
+    time_jump: f64,
+    psi_0_re: f64,
+    psi_0_im: f64,
+    psi_1_re: f64,
+    psi_1_im: f64,
+}
+
+impl JumpEvent {
+    fn write_to(&self, writer: &mut dyn Write) -> std::io::Result<()> {
+        writer.write_u32::<LittleEndian>(self.idx)?;
+        writer.write_u8(self.jump_type)?;
+        writer.write_f64::<LittleEndian>(self.time_jump)?;
+        writer.write_f64::<LittleEndian>(self.psi_0_re)?;
+        writer.write_f64::<LittleEndian>(self.psi_0_im)?;
+        writer.write_f64::<LittleEndian>(self.psi_1_re)?;
+        writer.write_f64::<LittleEndian>(self.psi_1_im)?;
+        Ok(())
+    }
+}
+
+
+
 fn create_jump_operators(lambda: f64, s: f64) -> (Array2<Complex64>, Array2<Complex64>) {
 
     let sigma_plus = array![
@@ -121,7 +151,14 @@ fn simulate_trajectory(
     psi1: &Array1<Complex64>,
     psi2: &Array1<Complex64>,
     eigvals: &Array1<f64>,
-) -> (Vec<f64>, Vec<f64>, Vec<f64>, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) {
+    writer: &mut dyn Write,
+) -> Result<(
+    Vec<f64>, Vec<f64>, Vec<f64>,
+    f64, f64, f64,
+    f64, f64, f64,
+    f64, f64, f64,
+    f64, f64, f64
+    ), Box<dyn std::error::Error>> {
     let mut rng = rand::thread_rng();
     let i = if rng.gen::<f64>() < eigvals[0] { 0 } else { 1 };
     let mut psi;
@@ -198,8 +235,12 @@ fn simulate_trajectory(
             p_p = 1.;
 
             inst_n_p += 1;
-            println!("{},1,{},{},{},{},{}", idx, i as f64 * dt, psi[0].re, psi[0].im, psi[1].re, psi[1].im);
             
+            if inst_n_p % 5 == 0 {
+                let ev = JumpEvent { idx: idx as u32, jump_type: 1, time_jump: i as f64 * dt, psi_0_re: psi[0].re, psi_0_im: psi[0].im, psi_1_re: psi[1].re, psi_1_im: psi[1].im };
+                ev.write_to(writer)?;
+            }
+
         } else if q >= p_m {
             let dpsi_j_m = l_minus.dot(&psi).mapv(|x| x / (amp_m.re).sqrt());
             psi = dpsi_j_m;
@@ -211,7 +252,10 @@ fn simulate_trajectory(
             p_m = 1.;
 
             inst_n_m += 1;
-            println!("{},0,{},{},{},{},{}", idx, i as f64 * dt, psi[0].re, psi[0].im, psi[1].re, psi[1].im);
+            if inst_n_m % 5 == 0 {
+                let ev = JumpEvent { idx: idx as u32, jump_type: 0, time_jump: i as f64 * dt, psi_0_re: psi[0].re, psi_0_im: psi[0].im, psi_1_re: psi[1].re, psi_1_im: psi[1].im };
+                ev.write_to(writer)?;
+            }
 
         } else {
             // No jump, just evolve
@@ -294,11 +338,11 @@ fn simulate_trajectory(
     let exp_entropy_tick_k_sum = entropy_tick_k.mapv(|e| (-e).exp()).sum();
     let exp_entropy_tick_q_sum = entropy_tick_q.mapv(|e| (-e).exp()).sum();
 
-    (ticks_n, ticks_k, ticks_q, 
+    Ok((ticks_n, ticks_k, ticks_q, 
         activity_tick_n_sum, activity_tick_k_sum, activity_tick_q_sum,
         entropy_tick_n_sum, entropy_tick_k_sum, entropy_tick_q_sum,
         exp_entropy_tick_n_sum, exp_entropy_tick_k_sum, exp_entropy_tick_q_sum,
-        exp_entropy_mar_n, exp_entropy_mar_k, exp_entropy_mar_q)
+        exp_entropy_mar_n, exp_entropy_mar_k, exp_entropy_mar_q))
     //  activity_tick_n, activity_tick_k, activity_tick_q,
     //  entropy_tick_n, entropy_tick_k, entropy_tick_q,
 }
@@ -429,6 +473,15 @@ impl SimulationConfig {
     }
 }
 
+use std::{fs, fs::File};
+use zstd::stream::write::Encoder;
+
+fn open_compressed_writer(path: &str) -> Result<Encoder<'static, File>, Box<dyn std::error::Error>> {
+    let f = File::create(path)?;
+    // level 3 = good speed/compression tradeoff
+    Ok(zstd::stream::write::Encoder::new(f, 3)?)
+}
+
 /// Run a complete quantum jump simulation for given parameters
 fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults, Box<dyn std::error::Error>> {
     
@@ -470,8 +523,36 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
         f64, f64, f64) = 
         (0..num_trajectories)
             .into_par_iter()
-            .map(|i| simulate_trajectory(i, gamma_p, gamma_m, s, dt, total_time, betawc, m, &l_plus, &l_minus, &l_p_m, &l_m_p, &h_eff, &pi, &psi1, &psi2, &eigvals))
-            .filter(|(ticks_n, _, _, _, _, _, _, _, _, _, _, _, _, _, _)| ticks_n.len() >= 2)
+            .filter_map(|i| {
+                // 1) make subfolder
+                let subdir = format!("output/{:05}", i / 1_000);
+                fs::create_dir_all(&subdir).ok()?;
+                
+                // 2) open per-trajectory .zst
+                let path = format!("{}/traj_{:05}.zst", subdir, i);
+                let file = File::create(&path).ok()?;
+                let mut encoder = Encoder::new(file, 3).ok()?;
+                
+                // Coerce encoder to a dyn Write trait object
+                let writer: &mut dyn Write = &mut encoder;
+                
+                // 3) simulate & write jumps
+                let result = simulate_trajectory(
+                    i,
+                    gamma_p, gamma_m, s, dt, total_time, betawc, m,
+                    &l_plus, &l_minus, &l_p_m, &l_m_p,
+                    &h_eff, &pi, &psi1, &psi2, &eigvals,
+                    &mut encoder,
+                ).ok()?;
+
+                encoder.finish().ok()?;
+
+                if result.0.len() >= 2 {
+                    Some(result)
+                } else {
+                    None
+                }
+            })
             .reduce(
                 || (
                     Vec::new(), Vec::new(), Vec::new(), // waits_n, waits_k, waits_q
@@ -481,9 +562,9 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<SimulationResults
                     0.0, 0.0, 0.0          // entropies_mar_n, entropies_mar_k, entropies_mar_q
                 ),
                 |mut acc, x| {
-                    acc.0.extend(x.0);  // waits_n - flatten Array1 to Vec
-                    acc.1.extend(x.1);  // waits_k - flatten Array1 to Vec
-                    acc.2.extend(x.2);  // waits_q - flatten Array1 to Vec
+                    acc.0 = x.0;// acc.0.extend(x.0);  // waits_n - flatten Array1 to Vec
+                    acc.0 = x.1;// acc.1.extend(x.1);  // waits_k - flatten Array1 to Vec
+                    acc.0 = x.2; // acc.2.extend(x.2);  // waits_q - flatten Array1 to Vec
                     acc.3 += x.3;  // activities_n_sum
                     acc.4 += x.4;  // activities_k_sum
                     acc.5 += x.5;  // activities_q_sum
@@ -635,7 +716,7 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
 
 
 use std::fs::OpenOptions;
-use std::io::Write;
+// use std::io::Write;
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
