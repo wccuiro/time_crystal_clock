@@ -1,4 +1,6 @@
-use ndarray::{array, Array1, Array2};
+use ndarray::{array, Array1, Array2, linalg::kron};
+use ndarray_linalg::Eig;
+use ndarray_linalg::{Eigh, UPLO};
 
 use num_complex::Complex64;
 use rand::Rng;
@@ -34,90 +36,104 @@ impl JumpEvent {
 }
 
 
+/// Build `L₊ = J₊ − i λ S I` and `L₋ = J₋ + i λ S I`
+/// in the spin-S basis of dimension d = 2S+1.
+///
+/// # Arguments
+/// * `lambda` — displacement parameter λ  
+/// * `S`      — total spin (e.g. n_s as f64 divided by 2)
+fn create_jump_operators(
+    lambda: f64,
+    s: f64,
+) -> (Array2<Complex64>, Array2<Complex64>) {
+    // dimension of the symmetric subspace
+    let d = (2.0 * s + 1.0) as usize;
+    let i_complex = Complex64::new(0.0, 1.0);
 
-fn create_jump_operators(lambda: f64, s: f64) -> (Array2<Complex64>, Array2<Complex64>) {
+    // 1. Build J₊
+    let mut j_p = Array2::<Complex64>::zeros((d, d));
+    for row in 0..d-1 {
+        let m = -s + row as f64;               // row index → m
+        let val = ((s - m) * (s + m + 1.0)).sqrt();
+        j_p[[row+1, row]] = Complex64::new(val, 0.0);
+    }
 
-    let sigma_plus = array![
-        [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)],
-        [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)]
-    ];
-    let sigma_minus = array![
-        [Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)],
-        [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)]
-    ];
+    // 2. Build J₋ = (J₊)ᵀ (real entries → Hermitian transpose = simple transpose)
+    let j_m = j_p.t().mapv(|c| c);
 
-    let identity = array![
-        [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)],
-        [Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)]
-    ];
+    // 3. Identity
+    let mut eye = Array2::<Complex64>::zeros((d, d));
+    for n in 0..d {
+        eye[[n, n]] = Complex64::new(1.0, 0.0);
+    }
 
-    let l_plus = sigma_plus - identity.mapv(|e| e * Complex64::new(0.0, 1.0) * lambda * s);
-    let l_minus = sigma_minus + identity.mapv(|e| e * Complex64::new(0.0, 1.0) * lambda * s);
-    
-    (l_plus, l_minus)
-} 
+    // 4. Displaced jumps
+    //    L₊ = J₊ − i λ S I
+    //    L₋ = J₋ + i λ S I
+    let disp = i_complex * lambda * s;
+    let l_p = &j_p - &eye * disp;
+    let l_m = &j_m + &eye * disp;
 
-fn steady_state(s: f64, lambda: f64, gamma_p: f64, gamma_m: f64) -> (Array2<Complex64>, Array1<Complex64>, Array1<Complex64>, Array1<f64>) {
-    let delta: f64 =  ((gamma_m + gamma_p).powi(2) + 4. * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)).sqrt();
-
-    // Eigenvalues
-    let eig_val_1 = (gamma_m.powi(2) * (1. + 2. * s.powi(2) * lambda.powi(2)) + gamma_p * (gamma_p + 2. * gamma_p * s.powi(2) * lambda.powi(2) - delta) + gamma_m * (gamma_p * (2. - 4. * s.powi(2) * lambda.powi(2)) + delta)) / (2. * (gamma_m + gamma_p).powi(2) + 4. * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2));
-
-    let eig_val_2 = (gamma_m.powi(2) * (1. + 2. * s.powi(2) * lambda.powi(2)) + gamma_p * (gamma_p + 2. * gamma_p * s.powi(2) * lambda.powi(2) + delta) - gamma_m * (gamma_p * (-2. + 4. * s.powi(2) * lambda.powi(2)) + delta)) / (2. * (gamma_m + gamma_p).powi(2) + 4. * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2));
-
-    let mut eig_vals: Array1<f64> = array![eig_val_1, eig_val_2];
-    eig_vals = eig_vals.mapv(|e| e/ (eig_val_1 + eig_val_2));
-
-    // Eigenvectors
-    let i = Complex64::new(0.0, 1.0);
-
-    // psi1
-    let top11 = i * (gamma_m + gamma_p - delta);
-    let norm1 = (2.0 * ((gamma_m + gamma_p).powi(2)
-        + 4.0 * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)
-        - gamma_m * delta
-        - gamma_p * delta))
-        .sqrt();
-    let top12 = (4. * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)).sqrt();
-    let mut psi1 = Array1::from(vec![top11 / norm1, Complex64::new( top12 / norm1, 0.0)]);
-    psi1 /= psi1.mapv(|e| e.conj()).dot(&psi1).sqrt();
-
-    // psi2
-    let top21 = i * (gamma_m + gamma_p + delta);
-    let norm2 = (2.0 * ((gamma_m + gamma_p).powi(2)
-        + 4.0 * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)
-        + gamma_m * delta
-        + gamma_p * delta))
-        .sqrt();
-    let top22 = (4. * (gamma_m - gamma_p).powi(2) * s.powi(2) * lambda.powi(2)).sqrt();
-    let mut psi2 = Array1::from(vec![top21 / norm2, Complex64::new( top22 / norm2, 0.0)]);
-    psi2 /= psi2.mapv(|e| e.conj()).dot(&psi2).sqrt();
+    (l_p, l_m)
+}
 
 
-    // Steady state density matrix
-    let a = psi1[0];
-    let b = psi1[1];
-    let op1 = array![
-        [a * a.conj(), a * b.conj()],
-        [b * a.conj(), b * b.conj()]
-    ];
+fn steady_state(
+    s: f64,
+    lambda: f64,
+    gamma_p: f64,
+    gamma_m: f64,
+) -> (Array2<Complex64>, Array1<f64>, Array2<Complex64>) {
+    // 1. Build jump operators L₊, L₋ in d = 2S+1 subspace
+    let (l_p, l_m) = create_jump_operators(lambda, s);
+    let d = l_p.shape()[0];
+    let eye_d = Array2::<Complex64>::eye(d);
 
-    // Compute |psi2><psi2|
-    let c = psi2[0];
-    let d = psi2[1];
-    let op2 = array![
-        [c * c.conj(), c * d.conj()],
-        [d * c.conj(), d * d.conj()]
-    ];
+    // 2. Build Liouvillian superoperator L (d^2 × d^2)
+    let mut l = Array2::<Complex64>::zeros((d*d, d*d));
 
-    // Weighted sum
-    let mut pi = op1.mapv(|v| v * eig_vals[0]) + op2.mapv(|v| v * eig_vals[1]);
+    // Add dissipator terms for each jump operator using ndarray::kron
+    for (l_k, gamma) in vec![(l_p.view(), gamma_p), (l_m.view(), gamma_m)] {
+        let l_d = l_k.t().mapv(|c| c.conj()).dot(&l_k);
+        // Lk ⊗ Lk†
+        l = l + kron(&l_k.to_owned(), &l_k.mapv(|c| c.conj())) * Complex64::new(gamma, 0.0);
+        // -1/2 I ⊗ ldᵀ
+        l = l - kron(&eye_d, &l_d.t()) * Complex64::new(0.5 * gamma, 0.0);
+        // -1/2 ld ⊗ I
+        l = l - kron(&l_d, &eye_d) * Complex64::new(0.5 * gamma, 0.0);
+    }
 
-    // Normalize by trace
-    let trace: f64 = (pi[(0, 0)] + pi[(1, 1)]).re;
-    pi /= Complex64::new(trace, 0.0);
+    // 3. Diagonalize L and find eigenvector with eigenvalue closest to zero
+    let (eigvals_l, eigvecs_l) = l.eig().expect("Liouvillian diagonalization failed");
+    let idx = eigvals_l
+        .iter()
+        .enumerate()
+        .min_by_key(|&(_, val)| {
+            let key = ((val.re.abs() * 1e6) as i64, (val.im.abs() * 1e6) as i64);
+            key
+        })
+        .unwrap().0;
 
-    (pi, psi1, psi2, eig_vals)
+    // 4. Extract steady-state vector and reshape to d×d matrix
+    let rho_ss_vec = eigvecs_l.column(idx).to_owned();
+    let mut rho_ss = Array2::<Complex64>::zeros((d, d));
+    for (i_row, &v) in rho_ss_vec.iter().enumerate() {
+        let row = i_row % d;
+        let col = i_row / d;
+        rho_ss[(row, col)] = v;
+    }
+
+    // 5. Normalize by trace
+    let tr: Complex64 = (0..d).map(|ii| rho_ss[(ii, ii)]).sum();
+    rho_ss.mapv_inplace(|c| c / tr);
+
+    // 6. Diagonalize rho_ss (Hermitian) for initial state sampling
+    let (eigvals, eigvecs) = rho_ss
+        .clone()
+        .eigh(UPLO::Lower)
+        .expect("rho_ss diagonalization failed");
+
+    (rho_ss, eigvals, eigvecs)
 }
 
 fn inst_entropy(pi: &Array2<Complex64> , psi: &Array1<Complex64>, inst_n_m: usize, inst_n_p: usize, betawc:f64) -> f64 {
@@ -148,25 +164,33 @@ fn simulate_trajectory(
     l_m_p: &Array2<Complex64>,
     h_eff: &Array2<Complex64>,
     pi: &Array2<Complex64>,
-    psi1: &Array1<Complex64>,
-    psi2: &Array1<Complex64>,
+    eigvecs: &Array2<Complex64>,
     eigvals: &Array1<f64>,
     writer: &mut dyn Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Normalize eigenvalues to use as probabilities (if needed)
+    let eigvals_sum = eigvals.sum();
+    let probabilities = eigvals.mapv(|x| x / eigvals_sum); // Optional: normalize to sum to 1
+
+    // Generate a random number and select an eigenvector
     let mut rng = rand::thread_rng();
-    let i = if rng.gen::<f64>() < eigvals[0] { 0 } else { 1 };
-    let mut psi;
-    
-    let steps: usize = (total_time / dt).ceil() as usize;
-    
-    if i == 0 {
-        psi = psi1.clone();
-        psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
-    } else {
-        psi = psi2.clone();
-        psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
+    let r: f64 = rng.gen(); // Random number in [0, 1)
+    let mut cumulative_prob = 0.0;
+    let mut i = 0;
+    for (idx, &prob) in probabilities.iter().enumerate() {
+        cumulative_prob += prob;
+        if r < cumulative_prob {
+            i = idx;
+            break;
+        }
     }
 
+    // Extract and normalize the selected eigenvector
+    let mut psi: Array1<Complex64> = eigvecs.column(i).to_owned();
+    let norm = psi.mapv(|e| e.conj()).dot(&psi).sqrt(); // Hermitian norm: sqrt(psi^† * psi)
+    psi /= norm;
+    
+    let steps: usize = (total_time / dt).ceil() as usize;
     // let mut ticks_n = Vec::new();
     // let mut ticks_k = Vec::new();
     // let mut ticks_q = Vec::new();
@@ -200,7 +224,8 @@ fn simulate_trajectory(
     let mut p_p = 1.;
     let mut p_m = 1.;
 
-    
+    let mut n_thres = 5;
+
     for i in 0..steps{
         
         
@@ -230,9 +255,12 @@ fn simulate_trajectory(
 
             inst_n_p += 1;
             
-            if inst_n_p % 5 == 0 {
+            if (inst_n_p + inst_n_m) >= n_thres { 
                 let ev = JumpEvent { idx: idx as u32, jump_type: 1, time_jump: i as f64 * dt, psi_0_re: psi[0].re, psi_0_im: psi[0].im, psi_1_re: psi[1].re, psi_1_im: psi[1].im };
                 ev.write_to(writer)?;
+
+                // println!("{}",inst_n_p + inst_n_m);
+                n_thres += 5;
             }
 
         } else if q >= p_m {
@@ -246,9 +274,13 @@ fn simulate_trajectory(
             p_m = 1.;
 
             inst_n_m += 1;
-            if inst_n_m % 5 == 0 {
+
+            if (inst_n_p + inst_n_m) >= n_thres { 
                 let ev = JumpEvent { idx: idx as u32, jump_type: 0, time_jump: i as f64 * dt, psi_0_re: psi[0].re, psi_0_im: psi[0].im, psi_1_re: psi[1].re, psi_1_im: psi[1].im };
                 ev.write_to(writer)?;
+
+                // println!("{}",inst_n_p + inst_n_m);
+                n_thres += 5;
             }
 
         } else {
@@ -497,9 +529,10 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<(), Box<dyn std::
     let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
     + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
     
-    let (pi, psi1, psi2, eigvals) = steady_state(s, lambda, gamma_p, gamma_m);
+    println!("Inicia diag");
+    let (pi, eigvals, eigvecs) = steady_state(s, lambda, gamma_p, gamma_m);
+    println!("Termina diag");
 
-        
     // 2) Phase 1: simulate in parallel, updating the bar
     (0..num_trajectories)
         .into_par_iter()
@@ -529,7 +562,7 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<(), Box<dyn std::
                 i,
                 gamma_p, gamma_m, s, dt, total_time, betawc, m,
                 &l_plus, &l_minus, &l_p_m, &l_m_p,
-                &h_eff, &pi, &psi1, &psi2, &eigvals,
+                &h_eff, &pi, &eigvecs, &eigvals,
                 writer,
             ).is_err() {
                 return;
@@ -643,9 +676,9 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<(), Box<dyn std::
 }
 
 fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
-    let init_s = 50.0_f64;
+    let init_s = 25.0_f64;
     let last_s = 50.0_f64;
-    let init_lambda = 0.0_f64;
+    let init_lambda = 2.0_f64;
     let last_lambda = 4.0_f64;
 
     let vec_omega: Vec<f64>;
@@ -687,7 +720,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     
-    let n_pts = 20_usize;
+    let n_pts = 1_usize;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda) = generate_parameter_vectors(n_pts);
@@ -696,7 +729,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     // Run simulations
     for (&s, &lambda) in vec_s.iter().zip(vec_lambda.iter()) {
-        let num_trajectories = 1000 ;
+        let num_trajectories = 100 ;
         let m = 5;
         let gamma_p: f64 = gamma_z / s * nb;
         let gamma_m: f64 = gamma_z / s * (nb + 1.0);

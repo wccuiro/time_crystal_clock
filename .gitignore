@@ -1,5 +1,8 @@
 /target
 /output
+/output_lambda
+/l2_s25
+
 *.png
 *.txt
 *.csv

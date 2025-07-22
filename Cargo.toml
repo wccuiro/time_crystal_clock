@@ -16,7 +16,7 @@ statrs = "0.16"
 # indicatif = "0.17"      # for progress bars
 byteorder = "1.5"         # Binary I/O helpers
 zstd = "0.13"             # Zstd compression
-
+ndarray-linalg = "0.16"
 
 
 [profile.release]
