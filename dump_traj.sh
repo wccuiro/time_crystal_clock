@@ -14,8 +14,8 @@ zstd -d --stdout "$ZST_FILE" > "$TMP_BIN"
 # 2) Use hexdump to print:
 #    - 1×u32  (idx)
 #    - 1×u8   (jump_type)
-#    - 5×f64  (time_jump, psi0_re, psi0_im, psi1_re, psi1_im)
-hexdump -e '1/4 "%u " 1/1 "%u " 5/8 "%f " "\n"' "$TMP_BIN" > "$OUT_TXT"
+#    - 2×f64  (time_jump, psi_pi_psi)
+hexdump -e '1/1 "%u " 1/8 "%.4f " 1/8 "%.15f " "\n"' "$TMP_BIN" > "$OUT_TXT"
 
 # 3) Clean up
 rm "$TMP_BIN"

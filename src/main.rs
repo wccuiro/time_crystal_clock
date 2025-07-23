@@ -1,6 +1,5 @@
 use ndarray::{array, Array1, Array2, linalg::kron};
-use ndarray_linalg::Eig;
-use ndarray_linalg::{Eigh, UPLO};
+use ndarray_linalg::{Eigh, UPLO, Solve};
 
 use num_complex::Complex64;
 use rand::Rng;
@@ -8,29 +7,26 @@ use rand::Rng;
 use rayon::prelude::*;
 
 use byteorder::{WriteBytesExt, LittleEndian};
-use std::io::Write;
+
+use std::io::{BufWriter, Write};
+
+use std::{fs, fs::File};
+use zstd::stream::write::Encoder;
+
 
 
 #[derive(Debug)]
 struct JumpEvent {
-    idx: u32,
     jump_type: u8, // 0 = m, 1 = p
     time_jump: f64,
-    psi_0_re: f64,
-    psi_0_im: f64,
-    psi_1_re: f64,
-    psi_1_im: f64,
+    entropy: f64,
 }
 
 impl JumpEvent {
     fn write_to(&self, writer: &mut dyn Write) -> std::io::Result<()> {
-        writer.write_u32::<LittleEndian>(self.idx)?;
         writer.write_u8(self.jump_type)?;
         writer.write_f64::<LittleEndian>(self.time_jump)?;
-        writer.write_f64::<LittleEndian>(self.psi_0_re)?;
-        writer.write_f64::<LittleEndian>(self.psi_0_im)?;
-        writer.write_f64::<LittleEndian>(self.psi_1_re)?;
-        writer.write_f64::<LittleEndian>(self.psi_1_im)?;
+        writer.write_f64::<LittleEndian>(self.entropy)?;
         Ok(())
     }
 }
@@ -84,50 +80,65 @@ fn steady_state(
     gamma_p: f64,
     gamma_m: f64,
 ) -> (Array2<Complex64>, Array1<f64>, Array2<Complex64>) {
-    // 1. Build jump operators L₊, L₋ in d = 2S+1 subspace
     let (l_p, l_m) = create_jump_operators(lambda, s);
-    let d = l_p.shape()[0];
+    let d = l_p.nrows();
     let eye_d = Array2::<Complex64>::eye(d);
 
-    // 2. Build Liouvillian superoperator L (d^2 × d^2)
+    // 1) Build L (d²×d²)
     let mut l = Array2::<Complex64>::zeros((d*d, d*d));
+    for (lk, gamma) in vec![(l_p.view(), gamma_p), (l_m.view(), gamma_m)] {
+        // L_d = L_k† L_k
+        let l_d = lk.t().mapv(|c| c.conj()).dot(&lk);
 
-    // Add dissipator terms for each jump operator using ndarray::kron
-    for (l_k, gamma) in vec![(l_p.view(), gamma_p), (l_m.view(), gamma_m)] {
-        let l_d = l_k.t().mapv(|c| c.conj()).dot(&l_k);
-        // Lk ⊗ Lk†
-        l = l + kron(&l_k.to_owned(), &l_k.mapv(|c| c.conj())) * Complex64::new(gamma, 0.0);
-        // -1/2 I ⊗ ldᵀ
-        l = l - kron(&eye_d, &l_d.t()) * Complex64::new(0.5 * gamma, 0.0);
-        // -1/2 ld ⊗ I
-        l = l - kron(&l_d, &eye_d) * Complex64::new(0.5 * gamma, 0.0);
+        // +γ (A⊗Cᵀ) for vec(L_k ρ L_k†)
+        l = l + kron(&lk.to_owned(), &lk.mapv(|c| c.conj()).t())
+             * Complex64::new(gamma/s, 0.0);
+
+        // -γ/2 [L_d⊗I + I⊗L_dᵀ]
+        l = l - kron(&l_d.to_owned(), &eye_d)
+             * Complex64::new(0.5*gamma/s, 0.0);
+        l = l - kron(&eye_d, &l_d.to_owned().t())
+             * Complex64::new(0.5*gamma/s, 0.0);
     }
 
-    // 3. Diagonalize L and find eigenvector with eigenvalue closest to zero
-    let (eigvals_l, eigvecs_l) = l.eig().expect("Liouvillian diagonalization failed");
-    let idx = eigvals_l
-        .iter()
-        .enumerate()
-        .min_by_key(|&(_, val)| {
-            let key = ((val.re.abs() * 1e6) as i64, (val.im.abs() * 1e6) as i64);
-            key
-        })
-        .unwrap().0;
-
-    // 4. Extract steady-state vector and reshape to d×d matrix
-    let rho_ss_vec = eigvecs_l.column(idx).to_owned();
-    let mut rho_ss = Array2::<Complex64>::zeros((d, d));
-    for (i_row, &v) in rho_ss_vec.iter().enumerate() {
-        let row = i_row % d;
-        let col = i_row / d;
-        rho_ss[(row, col)] = v;
+    // 2) Enforce Tr(ρ)=1 by replacing the last row
+    let n = d*d;
+    let mut l_mod = l;                           // consume `l`
+    for j in 0..n {
+        l_mod[(n-1, j)] = Complex64::new(0.0, 0.0);
+    }
+    for i in 0..d {
+        l_mod[(n-1, i*d + i)] = Complex64::new(1.0, 0.0);
     }
 
-    // 5. Normalize by trace
-    let tr: Complex64 = (0..d).map(|ii| rho_ss[(ii, ii)]).sum();
-    rho_ss.mapv_inplace(|c| c / tr);
+    // 3) RHS = [0,…,0,1]^T
+    let mut b = Array1::<Complex64>::zeros(n);
+    b[n-1] = Complex64::new(1.0, 0.0);
 
-    // 6. Diagonalize rho_ss (Hermitian) for initial state sampling
+    // 4) Solve for vec(ρ_ss)
+    let rho_vec = l_mod
+        .solve_into(b)
+        .expect("Failed to solve steady state");
+
+    // 5) Reshape into d×d ρ_ss
+    let mut rho_ss = Array2::from_shape_vec((d, d), rho_vec.to_vec())
+        .expect("Reshape error");
+
+    let tr: Complex64 = rho_ss.indexed_iter()
+                        .filter(|((i, j), _)| i == j)
+                        .map(|(_, &val)| val)
+                        .sum();
+    
+    rho_ss *= Complex64::new(1.0, 0.0) / tr;
+
+    // tr = rho_ss.indexed_iter()
+    //                     .filter(|((i, j), _)| i == j)
+    //                     .map(|(_, &val)| val)
+    //                     .sum();
+    
+    // println!("{},{}", tr.re, tr.im);
+
+    // 6) Diagonalize ρ_ss (Hermitian) for sampling
     let (eigvals, eigvecs) = rho_ss
         .clone()
         .eigh(UPLO::Lower)
@@ -150,14 +161,12 @@ fn inst_entropy(pi: &Array2<Complex64> , psi: &Array1<Complex64>, inst_n_m: usiz
 }
 
 fn simulate_trajectory(
-    idx: usize,
     gamma_p: f64,
     gamma_m: f64,
     s: f64,
     dt: f64,
     total_time: f64,
     betawc: f64,
-    m: usize,
     l_plus: &Array2<Complex64>,
     l_minus: &Array2<Complex64>,
     l_p_m: &Array2<Complex64>,
@@ -168,6 +177,9 @@ fn simulate_trajectory(
     eigvals: &Array1<f64>,
     writer: &mut dyn Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Calling a Buffer
+    let mut buf = BufWriter::new(writer);
+
     // Normalize eigenvalues to use as probabilities (if needed)
     let eigvals_sum = eigvals.sum();
     let probabilities = eigvals.mapv(|x| x / eigvals_sum); // Optional: normalize to sum to 1
@@ -191,40 +203,22 @@ fn simulate_trajectory(
     psi /= norm;
     
     let steps: usize = (total_time / dt).ceil() as usize;
-    // let mut ticks_n = Vec::new();
-    // let mut ticks_k = Vec::new();
-    // let mut ticks_q = Vec::new();
     
-    let mut last_tick_n = 0.0;
-    let mut last_tick_k = 0.0;
-    let mut last_tick_q = 0.0;
-
-    // let mut activity_tick_n = Vec::new();
-    // let mut activity_tick_k = Vec::new();
-    // let mut activity_tick_q = Vec::new();
-
-    let mut last_activity_n = 0;
-    let mut last_activity_k = 0;
-    let mut last_activity_q = 0;
-
+    
     let mut inst_n_m = 0; 
     let mut inst_n_p = 0;
 
-    // let mut entropys_tick_n = Vec::new();
-    // let mut entropys_tick_k = Vec::new();
-    // let mut entropys_tick_q = Vec::new();
+    let mut ins_mar_entropy = inst_entropy(&pi , &psi, inst_n_m, inst_n_p, betawc);
 
-    let mut inst_s_n = inst_entropy(&pi , &psi, inst_n_m, inst_n_p, betawc);
-    let mut inst_s_k = inst_s_n;
-    let mut inst_s_q = inst_s_n;
-    
     let mut r = rng.gen::<f64>();
     let mut q = rng.gen::<f64>();
 
     let mut p_p = 1.;
     let mut p_m = 1.;
 
-    let mut n_thres = 5;
+    let ev0 = JumpEvent {jump_type: 0, time_jump: 0.0_f64, entropy: ins_mar_entropy};
+    ev0.write_to(&mut buf)?;
+
 
     for i in 0..steps{
         
@@ -255,118 +249,48 @@ fn simulate_trajectory(
 
             inst_n_p += 1;
             
-            if (inst_n_p + inst_n_m) >= n_thres { 
-                let ev = JumpEvent { idx: idx as u32, jump_type: 1, time_jump: i as f64 * dt, psi_0_re: psi[0].re, psi_0_im: psi[0].im, psi_1_re: psi[1].re, psi_1_im: psi[1].im };
-                ev.write_to(writer)?;
+            ins_mar_entropy = inst_entropy(&pi , &psi, inst_n_m, inst_n_p, betawc);
+            // println!("{}", act_entropy);
 
-                // println!("{}",inst_n_p + inst_n_m);
-                n_thres += 5;
-            }
+            let ev = JumpEvent {jump_type: 1, time_jump: i as f64 * dt, entropy: ins_mar_entropy};
+            ev.write_to(&mut buf)?;
+
 
         } else if q >= p_m {
             let dpsi_j_m = l_minus.dot(&psi).mapv(|x| x / (amp_m.re).sqrt());
             psi = dpsi_j_m;
             psi = &psi + &dpsi_nh;
             psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
-                        
+
             q = rng.gen::<f64>();
             
             p_m = 1.;
 
             inst_n_m += 1;
 
-            if (inst_n_p + inst_n_m) >= n_thres { 
-                let ev = JumpEvent { idx: idx as u32, jump_type: 0, time_jump: i as f64 * dt, psi_0_re: psi[0].re, psi_0_im: psi[0].im, psi_1_re: psi[1].re, psi_1_im: psi[1].im };
-                ev.write_to(writer)?;
+            // let act_entropy: f64 = psi.mapv(|e| e.conj()).dot(&pi.dot(&psi)).re;
+            // println!("{}", act_entropy);
 
-                // println!("{}",inst_n_p + inst_n_m);
-                n_thres += 5;
-            }
+            ins_mar_entropy = inst_entropy(&pi , &psi, inst_n_m, inst_n_p, betawc);
+
+            let ev = JumpEvent {jump_type: 0, time_jump: i as f64 * dt, entropy: ins_mar_entropy};
+            ev.write_to(&mut buf)?; 
+
 
         } else {
             // No jump, just evolve
             psi = &psi + &dpsi_nh;
             psi /= psi.mapv(|e| e.conj()).dot(&psi).sqrt();
         }
-
-        // if inst_n_m >= (ticks_n.len()+1) * m {
-        //     // println!("{} >= {}, where {}", inst_n_m, (ticks_n.len()+1) * m, ticks_n.len());
-
-        //     ticks_n.push(i as f64 * dt - last_tick_n);
-        //     last_tick_n = i as f64 * dt;
-
-        //     entropys_tick_n.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_n);
-        //     inst_s_n = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
-            
-        //     activity_tick_n.push((inst_n_m + inst_n_p) - last_activity_n);
-        //     last_activity_n = inst_n_m + inst_n_p;
-
-        // } 
-
-        // if (inst_n_m + inst_n_p) >= (ticks_k.len()+1) * m {
-        //     ticks_k.push(i as f64 * dt - last_tick_k);
-        //     last_tick_k = i as f64 * dt;
-
-        //     entropys_tick_k.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_k);
-        //     inst_s_k = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
-
-        //     activity_tick_k.push((inst_n_m + inst_n_p) - last_activity_k);
-        //     last_activity_k = inst_n_m + inst_n_p;            
-
-        // }
-
-        // if (inst_n_m as i32 - inst_n_p as i32) >= ((ticks_q.len()+1) * m) as i32 {
-        //     ticks_q.push(i as f64 * dt - last_tick_q);
-        //     last_tick_q = i as f64 * dt;
-            
-        //     entropys_tick_q.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_q);
-        //     inst_s_q = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
-            
-        //     activity_tick_q.push((inst_n_m + inst_n_p) - last_activity_q);
-        //     last_activity_q = inst_n_m + inst_n_p;
-            
-        // }
         
         p_m *= 1.0 - prob_m;
         p_p *= 1.0 - prob_p;
         
     }
 
-    // println!("{}, {}, {}", ticks_n.len(), ticks_k.len(), ticks_q.len());
-
-    // let ticks_n = ticks_n[1..].to_vec();
-    // let ticks_k = ticks_k[1..].to_vec();
-    // let ticks_q = ticks_q[1..].to_vec();
-
-    // let activity_tick_n: Array1<usize> = Array1::from(activity_tick_n[1..].to_vec());
-    // let activity_tick_k: Array1<usize> = Array1::from(activity_tick_k[1..].to_vec());
-    // let activity_tick_q: Array1<usize> = Array1::from(activity_tick_q[1..].to_vec());
-    
-    // let exp_entropy_mar_n: f64 = (-entropys_tick_n[0]).exp();
-    // let exp_entropy_mar_k: f64 = (-entropys_tick_k[0]).exp();
-    // let exp_entropy_mar_q: f64 = (-entropys_tick_q[0]).exp();
-
-    // let entropy_tick_n: Array1<f64> = Array1::from(entropys_tick_n[1..].to_vec());
-    // let entropy_tick_k: Array1<f64> = Array1::from(entropys_tick_k[1..].to_vec());
-    // let entropy_tick_q: Array1<f64> = Array1::from(entropys_tick_q[1..].to_vec());
-    
-
-    // // Computing cumulative results insead of vectors
-    // let activity_tick_n_sum: f64 = activity_tick_n.iter().sum::<usize>() as f64;
-    // let activity_tick_k_sum: f64 = activity_tick_k.iter().sum::<usize>() as f64;
-    // let activity_tick_q_sum: f64 = activity_tick_q.iter().sum::<usize>() as f64;
-
-    // let entropy_tick_n_sum: f64 = entropy_tick_n.iter().sum();
-    // let entropy_tick_k_sum: f64 = entropy_tick_k.iter().sum();
-    // let entropy_tick_q_sum: f64 = entropy_tick_q.iter().sum();
-
-    // let exp_entropy_tick_n_sum = entropy_tick_n.mapv(|e| (-e).exp()).sum();
-    // let exp_entropy_tick_k_sum = entropy_tick_k.mapv(|e| (-e).exp()).sum();
-    // let exp_entropy_tick_q_sum = entropy_tick_q.mapv(|e| (-e).exp()).sum();
+    buf.flush()?;
 
     Ok(())
-    //  activity_tick_n, activity_tick_k, activity_tick_q,
-    //  entropy_tick_n, entropy_tick_k, entropy_tick_q,
 }
 
 
@@ -441,7 +365,6 @@ struct SimulationConfig {
     lambda: f64,
     s: f64,
     num_trajectories: usize,
-    m: usize,
 }
 
 // Results struct to organize outputs
@@ -477,7 +400,7 @@ struct SimulationResults {
 }
 
 impl SimulationConfig {
-    fn new(dt: f64, total_time: f64, omega_c: f64, beta: f64, gamma_p: f64, gamma_m: f64, lambda: f64, s: f64, num_trajectories: usize, m: usize) -> Self {
+    fn new(dt: f64, total_time: f64, omega_c: f64, beta: f64, gamma_p: f64, gamma_m: f64, lambda: f64, s: f64, num_trajectories: usize) -> Self {
         let steps = (total_time / dt).ceil() as usize;
         Self {
             dt,
@@ -490,86 +413,108 @@ impl SimulationConfig {
             lambda,
             s,
             num_trajectories,
-            m,
         }
     }
 }
 
-use std::{fs, fs::File};
-use zstd::stream::write::Encoder;
 
-fn open_compressed_writer(path: &str) -> Result<Encoder<'static, File>, Box<dyn std::error::Error>> {
-    let f = File::create(path)?;
-    // level 3 = good speed/compression tradeoff
-    Ok(zstd::stream::write::Encoder::new(f, 3)?)
-}
-
-/// Run a complete quantum jump simulation for given parameters
-fn run_quantum_simulation(config: &SimulationConfig) -> Result<(), Box<dyn std::error::Error>> {
+// fn analize_data {
+    // let mut last_tick_n = 0.0;
+    // let mut last_tick_k = 0.0;
+    // let mut last_tick_q = 0.0;
     
-    let dt = config.dt;
-    let total_time = config.total_time;
-    let _steps = config.steps;
-    let omega_c = config.omega_c;
-    let beta = config.beta;
-    let gamma_p = config.gamma_p;
-    let gamma_m = config.gamma_m;
-    let lambda = config.lambda;
-    let s = config.s;
-    let num_trajectories = config.num_trajectories;
-    let m = config.m;
+    // let mut ticks_n = Vec::new();
+    // let mut ticks_k = Vec::new();
+    // let mut ticks_q = Vec::new();
+    // let mut activity_tick_n = Vec::new();
+    // let mut activity_tick_k = Vec::new();
+    // let mut activity_tick_q = Vec::new();
+
+    // let mut last_activity_n = 0;
+    // let mut last_activity_k = 0;
+    // let mut last_activity_q = 0;
+
+    // let mut entropys_tick_n = Vec::new();
+    // let mut entropys_tick_k = Vec::new();
+    // let mut entropys_tick_q = Vec::new();
+
+    // if inst_n_m >= (ticks_n.len()+1) * m {
+    //     // println!("{} >= {}, where {}", inst_n_m, (ticks_n.len()+1) * m, ticks_n.len());
+
+    //     ticks_n.push(i as f64 * dt - last_tick_n);
+    //     last_tick_n = i as f64 * dt;
+
+    //     entropys_tick_n.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_n);
+    //     inst_s_n = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
+        
+    //     activity_tick_n.push((inst_n_m + inst_n_p) - last_activity_n);
+    //     last_activity_n = inst_n_m + inst_n_p;
+
+    // } 
+
+    // if (inst_n_m + inst_n_p) >= (ticks_k.len()+1) * m {
+    //     ticks_k.push(i as f64 * dt - last_tick_k);
+    //     last_tick_k = i as f64 * dt;
+
+    //     entropys_tick_k.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_k);
+    //     inst_s_k = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
+
+    //     activity_tick_k.push((inst_n_m + inst_n_p) - last_activity_k);
+    //     last_activity_k = inst_n_m + inst_n_p;            
+
+    // }
+
+    // if (inst_n_m as i32 - inst_n_p as i32) >= ((ticks_q.len()+1) * m) as i32 {
+    //     ticks_q.push(i as f64 * dt - last_tick_q);
+    //     last_tick_q = i as f64 * dt;
+        
+    //     entropys_tick_q.push(inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc) - inst_s_q);
+    //     inst_s_q = inst_entropy(&pi, &psi, inst_n_m, inst_n_p, betawc);
+        
+    //     activity_tick_q.push((inst_n_m + inst_n_p) - last_activity_q);
+    //     last_activity_q = inst_n_m + inst_n_p;
+        
+    // }
+
+    // println!("{}, {}, {}", ticks_n.len(), ticks_k.len(), ticks_q.len());
+
+    // let ticks_n = ticks_n[1..].to_vec();
+    // let ticks_k = ticks_k[1..].to_vec();
+    // let ticks_q = ticks_q[1..].to_vec();
+
+    // let activity_tick_n: Array1<usize> = Array1::from(activity_tick_n[1..].to_vec());
+    // let activity_tick_k: Array1<usize> = Array1::from(activity_tick_k[1..].to_vec());
+    // let activity_tick_q: Array1<usize> = Array1::from(activity_tick_q[1..].to_vec());
     
-    let betawc = beta * omega_c;
+    // let exp_entropy_mar_n: f64 = (-entropys_tick_n[0]).exp();
+    // let exp_entropy_mar_k: f64 = (-entropys_tick_k[0]).exp();
+    // let exp_entropy_mar_q: f64 = (-entropys_tick_q[0]).exp();
 
-    let (l_plus, l_minus) = create_jump_operators(lambda, s);
-
-    let l_p_m = &l_plus.dot(&l_minus);  
-    let l_m_p = &l_minus.dot(&l_plus);  
-
-    let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
-    + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
+    // let entropy_tick_n: Array1<f64> = Array1::from(entropys_tick_n[1..].to_vec());
+    // let entropy_tick_k: Array1<f64> = Array1::from(entropys_tick_k[1..].to_vec());
+    // let entropy_tick_q: Array1<f64> = Array1::from(entropys_tick_q[1..].to_vec());
     
-    println!("Inicia diag");
-    let (pi, eigvals, eigvecs) = steady_state(s, lambda, gamma_p, gamma_m);
-    println!("Termina diag");
 
-    // 2) Phase 1: simulate in parallel, updating the bar
-    (0..num_trajectories)
-        .into_par_iter()
-        .for_each(|i| {
-            // 1) make subfolder
-            let subdir = format!("l{}_s{}/{:05}", lambda, s, i / 1_000);
-            if fs::create_dir_all(&subdir).is_err() {
-                return;
-            }
+    // // Computing cumulative results insead of vectors
+    // let activity_tick_n_sum: f64 = activity_tick_n.iter().sum::<usize>() as f64;
+    // let activity_tick_k_sum: f64 = activity_tick_k.iter().sum::<usize>() as f64;
+    // let activity_tick_q_sum: f64 = activity_tick_q.iter().sum::<usize>() as f64;
 
-            // 2) open per-trajectory .zst
-            let path = format!("{}/traj_{:05}.zst", subdir, i);
-            let file = match File::create(&path) {
-                Ok(f) => f,
-                Err(_) => return,
-            };
-            let mut encoder = match Encoder::new(file, 3) {
-                Ok(e) => e,
-                Err(_) => return,
-            };
+    // let entropy_tick_n_sum: f64 = entropy_tick_n.iter().sum();
+    // let entropy_tick_k_sum: f64 = entropy_tick_k.iter().sum();
+    // let entropy_tick_q_sum: f64 = entropy_tick_q.iter().sum();
 
-            // Coerce encoder to a dyn Write trait object
-            let writer: &mut dyn Write = &mut encoder;
+    // let exp_entropy_tick_n_sum = entropy_tick_n.mapv(|e| (-e).exp()).sum();
+    // let exp_entropy_tick_k_sum = entropy_tick_k.mapv(|e| (-e).exp()).sum();
+    // let exp_entropy_tick_q_sum = entropy_tick_q.mapv(|e| (-e).exp()).sum();
 
-            // 3) simulate & write jumps
-            if simulate_trajectory(
-                i,
-                gamma_p, gamma_m, s, dt, total_time, betawc, m,
-                &l_plus, &l_minus, &l_p_m, &l_m_p,
-                &h_eff, &pi, &eigvecs, &eigvals,
-                writer,
-            ).is_err() {
-                return;
-            }
+    //  activity_tick_n, activity_tick_k, activity_tick_q,
+    //  entropy_tick_n, entropy_tick_k, entropy_tick_q,
 
-            let _ = encoder.finish();
-        });
+
+
+
+
 
     // let mean_act_n = activities_n_sum / waits_n.len() as f64; // Mean of entropies
     // let mean_ent_n = entropies_n_sum/waits_n.len() as f64; // Mean of entropies
@@ -672,11 +617,77 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<(), Box<dyn std::
     //     activity_tick_q: mean_act_q,
     // })
 
+// }
+
+/// Run a complete quantum jump simulation for given parameters
+fn run_quantum_simulation(config: &SimulationConfig) -> Result<(), Box<dyn std::error::Error>> {
+    
+    let dt = config.dt;
+    let total_time = config.total_time;
+    let _steps = config.steps;
+    let omega_c = config.omega_c;
+    let beta = config.beta;
+    let gamma_p = config.gamma_p;
+    let gamma_m = config.gamma_m;
+    let lambda = config.lambda;
+    let s = config.s;
+    let num_trajectories = config.num_trajectories;
+    
+    let betawc = beta * omega_c;
+
+    let (l_plus, l_minus) = create_jump_operators(lambda, s);
+
+    let l_p_m = &l_plus.dot(&l_minus);  
+    let l_m_p = &l_minus.dot(&l_plus);  
+
+    let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
+    + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
+    
+    println!("Inicia diag");
+    let (pi, eigvals, eigvecs) = steady_state(s, lambda, gamma_p, gamma_m);
+    println!("Termina diag");
+
+    // 2) Phase 1: simulate in parallel, updating the bar
+    (0..num_trajectories)
+        .into_par_iter()
+        .for_each(|i| {
+            // 1) make subfolder
+            let subdir = format!("output/l{}_s{}/{:05}", lambda, s, i / 1_000);
+            if fs::create_dir_all(&subdir).is_err() {
+                return;
+            }
+
+            // 2) open per-trajectory .zst
+            let path = format!("{}/traj_{:05}.zst", subdir, i);
+            let file = match File::create(&path) {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+            let mut encoder = match Encoder::new(file, 3) {
+                Ok(e) => e,
+                Err(_) => return,
+            };
+
+            // Coerce encoder to a dyn Write trait object
+            let writer: &mut dyn Write = &mut encoder;
+
+            // 3) simulate & write jumps
+            if simulate_trajectory(
+                gamma_p, gamma_m, s, dt, total_time, betawc,
+                &l_plus, &l_minus, &l_p_m, &l_m_p,
+                &h_eff, &pi, &eigvecs, &eigvals,
+                writer,
+            ).is_err() {
+                return;
+            }
+
+            let _ = encoder.finish();
+        });
     Ok(())
 }
 
 fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
-    let init_s = 25.0_f64;
+    let init_s = 20.0_f64;
     let last_s = 50.0_f64;
     let init_lambda = 2.0_f64;
     let last_lambda = 4.0_f64;
@@ -707,8 +718,6 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
 }
 
 
-use std::fs::OpenOptions;
-// use std::io::Write;
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
@@ -727,19 +736,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     println!("Running simulations with S: {:?}, lambda: {:?}", vec_s, vec_lambda);
 
-    // Run simulations
+    // Generate Data
     for (&s, &lambda) in vec_s.iter().zip(vec_lambda.iter()) {
         let num_trajectories = 100 ;
-        let m = 5;
         let gamma_p: f64 = gamma_z / s * nb;
         let gamma_m: f64 = gamma_z / s * (nb + 1.0);
-
+        
         let config = SimulationConfig::new(
-            dt, total_time, omega_c, beta, gamma_p, gamma_m, lambda, s, num_trajectories, m,
+            dt, total_time, omega_c, beta, gamma_p, gamma_m, lambda, s, num_trajectories,
         );
-
+        
         run_quantum_simulation(&config)?;
         
+    }
+    
+    // let m = 5;
         // let results = 
 
         // let filename = format!(
@@ -810,8 +821,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         // activity_tick_n_set.push(results.activity_tick_n);
         // activity_tick_k_set.push(results.activity_tick_k);
         // activity_tick_q_set.push(results.activity_tick_q);
-    }
-
+ 
     // plot_multiple_histogram(&counts_n_set, &bin_width_n_set, total_time, "Prueba.png")?;
 
     // println!("{:?}", counts_n_set);
