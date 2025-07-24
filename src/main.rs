@@ -8,10 +8,10 @@ use rayon::prelude::*;
 
 use byteorder::{WriteBytesExt, LittleEndian};
 
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Write, BufReader, Read};
 
-use std::{fs, fs::File};
-use zstd::stream::write::Encoder;
+use std::{fs, fs::File, path::Path};
+use zstd::stream::{write::Encoder, read::Decoder};
 
 
 
@@ -417,8 +417,114 @@ impl SimulationConfig {
     }
 }
 
+fn find_first_peak(x: &[f64], y: &[f64]) -> Option<usize> {
+    for i in 1..y.len() - 1 {
+        if y[i] > y[i - 1] && y[i] > y[i + 1] {
+            return Some(i);
+        }
+    }
+    None
+}
 
-// fn analize_data {
+fn optimal_threshold(
+    vec_lambda: &Vec<f64>,
+    vec_s: &Vec<f64>,
+    max_files: usize,
+) -> Result<Vec<f64>, Box<dyn std::error::Error>> {
+    let n_pts = 1000;
+    let init_m = 5.0_f64;
+    let last_m = 2000.0_f64;
+
+    let m_values: Vec<f64> = if n_pts == 1 {
+        vec![init_m]
+    } else {
+        (0..n_pts)
+            .map(|i| {
+                let t = i as f64 / (n_pts - 1) as f64;
+                (init_m + t * (last_m - init_m)).round()
+            })
+            .collect()
+    };
+
+    let mut optimal_m = Vec::new();
+    let jump_type = 0_u8; // <-- you should set this appropriately
+    let base_dir = "output"; // <-- update if needed
+
+    for &lambda in vec_lambda {
+        for &s in vec_s {
+            let mut sum    = vec![0.0; m_values.len()];
+            let mut sum_sq = vec![0.0; m_values.len()];
+            let mut cnt    = vec![0;   m_values.len()];
+
+            let s_int = s as i64;
+            for i in 0..max_files {
+                let dir_idx = i / 1_000;
+                let subdir = format!("{}/l{:.2}_s{}/{:05}", base_dir, lambda, s_int, dir_idx);
+                let traj = format!("{}/traj_{:05}.zst", subdir, i);
+                let path = std::path::Path::new(&traj);
+                if !path.exists() { break; }
+
+                let file = std::fs::File::open(path)?;
+                let mut dec = zstd::Decoder::new(std::io::BufReader::new(file))?;
+                let mut times = Vec::new();
+                loop {
+                    let mut buf = [0u8; 1 + 8 + 8];
+                    match dec.read_exact(&mut buf) {
+                        Ok(()) => {
+                            let id = buf[0];
+                            let t = f64::from_le_bytes(buf[1..9].try_into().unwrap());
+                            if id == jump_type {
+                                times.push(t);
+                            }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                        Err(e) => return Err(Box::new(e)),
+                    }
+                }
+
+                if times.len() <= 1 { continue; }
+                let slice = &times[1..];
+
+                for (j, &m) in m_values.iter().enumerate() {
+                    let chunks = slice.len() as i32 / m as i32;
+                    if chunks == 0 { continue; }
+
+                    let mut last = 0.0;
+                    for k in 1..=chunks {
+                        let idx = (k * m as i32 - 1) as usize;
+                        let delta = slice[idx] - last;
+                        last = slice[idx];
+                        sum[j] += delta;
+                        sum_sq[j] += delta * delta;
+                    }
+                    cnt[j] += chunks;
+                }
+            }
+
+            let mut acts = Vec::with_capacity(m_values.len());
+            for j in 0..m_values.len() {
+                if cnt[j] == 0 {
+                    acts.push(0.0);
+                } else {
+                    let n = cnt[j] as f64;
+                    let mu = sum[j] / n;
+                    let var = sum_sq[j] / n - mu * mu;
+                    acts.push(if var > 0.0 { mu * mu / var } else { 0.0 });
+                }
+            }
+
+            println!("{:?}", m_values);
+            println!("{:?}", acts);            
+
+            match find_first_peak(&m_values, &acts) {
+                Some(index) => optimal_m.push(m_values[index]),
+                None => return Err("No local maximum found.".into()),
+            }
+        }
+    }
+
+    Ok(optimal_m)
+}
     // let mut last_tick_n = 0.0;
     // let mut last_tick_k = 0.0;
     // let mut last_tick_q = 0.0;
@@ -643,16 +749,16 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<(), Box<dyn std::
     let h_eff = l_plus.dot(&l_minus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_m / s)) 
     + l_minus.dot(&l_plus).mapv(|x| x * Complex64::new(0.0, -0.5 * gamma_p / s));
     
-    println!("Inicia diag");
+    println!("Initialazing data");
     let (pi, eigvals, eigvecs) = steady_state(s, lambda, gamma_p, gamma_m);
-    println!("Termina diag");
-
+    
+    println!("Generating data");
     // 2) Phase 1: simulate in parallel, updating the bar
     (0..num_trajectories)
         .into_par_iter()
         .for_each(|i| {
             // 1) make subfolder
-            let subdir = format!("output/l{}_s{}/{:05}", lambda, s, i / 1_000);
+            let subdir = format!("output/l{:.2}_s{}/{:05}", lambda, s as i64, i / 1_000);
             if fs::create_dir_all(&subdir).is_err() {
                 return;
             }
@@ -692,21 +798,22 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
     let init_lambda = 2.0_f64;
     let last_lambda = 4.0_f64;
 
-    let vec_omega: Vec<f64>;
-    let vec_gamma: Vec<f64>;
+    let vec_s: Vec<f64>;
+    let vec_lambda: Vec<f64>;
 
     if n_pts == 1 {
-        vec_omega = vec![init_s];
-        vec_gamma = vec![init_lambda];
+        vec_s = vec![init_s];
+        vec_lambda = vec![init_lambda];
     } else {
-        vec_omega = (0..n_pts)
+        vec_s = (0..n_pts)
             .map(|i| {
                 let t = i as f64 / (n_pts - 1) as f64;
-                init_s + t * (last_s - init_s)
+                let val = init_s as f64 + t * (last_s - init_s) as f64;
+                val.round()  // force to nearest integer as float
             })
             .collect();
 
-        vec_gamma = (0..n_pts)
+        vec_lambda = (0..n_pts)
             .map(|i| {
                 let t = i as f64 / (n_pts - 1) as f64;
                 init_lambda + t * (last_lambda - init_lambda)
@@ -714,7 +821,7 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
             .collect();
     }
 
-    (vec_omega, vec_gamma)
+    (vec_s, vec_lambda)
 }
 
 
@@ -731,6 +838,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     
     let n_pts = 1_usize;
 
+    let num_trajectories = 100;
+
     // Generate parameter vectors
     let (vec_s, vec_lambda) = generate_parameter_vectors(n_pts);
 
@@ -738,7 +847,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     // Generate Data
     for (&s, &lambda) in vec_s.iter().zip(vec_lambda.iter()) {
-        let num_trajectories = 100 ;
         let gamma_p: f64 = gamma_z / s * nb;
         let gamma_m: f64 = gamma_z / s * (nb + 1.0);
         
@@ -749,7 +857,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         run_quantum_simulation(&config)?;
         
     }
-    
+
+    println!("Analyzing data");
+    // In this part there is a file in output with fromat l{lambda}_s{s}, with files l{lambda}_s{s}/{:05}/traj_{:05}.zst
+    let max_files = 2;
+
+    let optimal_m = optimal_threshold(&vec_lambda, &vec_s, max_files)?;
+
+    println!("{:?}", optimal_m);
+
+
+
+
+
     // let m = 5;
         // let results = 
 

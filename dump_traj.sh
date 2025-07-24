@@ -12,7 +12,6 @@ OUT_TXT="traj.txt"
 zstd -d --stdout "$ZST_FILE" > "$TMP_BIN"
 
 # 2) Use hexdump to print:
-#    - 1×u32  (idx)
 #    - 1×u8   (jump_type)
 #    - 2×f64  (time_jump, psi_pi_psi)
 hexdump -e '1/1 "%u " 1/8 "%.4f " 1/8 "%.15f " "\n"' "$TMP_BIN" > "$OUT_TXT"

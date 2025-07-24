@@ -17,6 +17,7 @@ statrs = "0.16"
 byteorder = "1.5"         # Binary I/O helpers
 zstd = "0.13"             # Zstd compression
 ndarray-linalg = "0.16"
+# walkdir = "2.4"
 
 
 [profile.release]
