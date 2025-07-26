@@ -75,35 +75,33 @@ fn create_jump_operators(
 
 
 fn steady_state(
-    s: f64,
-    lambda: f64,
-    gamma_p: f64,
-    gamma_m: f64,
+    s: f64,        // time‐scale (>0)
+    lambda: f64,   // Hamiltonian coupling
+    gamma_p: f64,  // jump rate for L₊
+    gamma_m: f64,  // jump rate for L₋
 ) -> (Array2<Complex64>, Array1<f64>, Array2<Complex64>) {
-    let (l_p, l_m) = create_jump_operators(lambda, s);
-    let d = l_p.nrows();
-    let eye_d = Array2::<Complex64>::eye(d);
+    // 1) get jump ops
+    let (l_plus, l_minus) = create_jump_operators(lambda, s);
+    let d = l_plus.nrows();
+    let n = d * d;
+    let identity = Array2::<Complex64>::eye(d);
 
-    // 1) Build L (d²×d²)
-    let mut l = Array2::<Complex64>::zeros((d*d, d*d));
-    for (lk, gamma) in vec![(l_p.view(), gamma_p), (l_m.view(), gamma_m)] {
-        // L_d = L_k† L_k
-        let l_d = lk.t().mapv(|c| c.conj()).dot(&lk);
+    let term2_m = kron(&l_minus, &l_plus.t());
+    let term2_p = kron(&l_plus, &l_minus.t());
 
-        // +γ (A⊗Cᵀ) for vec(L_k ρ L_k†)
-        l = l + kron(&lk.to_owned(), &lk.mapv(|c| c.conj()).t())
-             * Complex64::new(gamma/s, 0.0);
+    let left_p = l_minus.dot(&l_plus);
+    let right_p = l_plus.t().dot(&l_minus.t());
 
-        // -γ/2 [L_d⊗I + I⊗L_dᵀ]
-        l = l - kron(&l_d.to_owned(), &eye_d)
-             * Complex64::new(0.5*gamma/s, 0.0);
-        l = l - kron(&eye_d, &l_d.to_owned().t())
-             * Complex64::new(0.5*gamma/s, 0.0);
-    }
+    let left_m = l_plus.dot(&l_minus);
+    let right_m = l_minus.t().dot(&l_plus.t());
 
-    // 2) Enforce Tr(ρ)=1 by replacing the last row
-    let n = d*d;
-    let mut l_mod = l;                           // consume `l`
+    let term3_m = (kron(&left_m, &identity) + kron(&identity, &right_m)).mapv(|e| e * 0.5); 
+    let term3_p = (kron(&left_p, &identity) + kron(&identity, &right_p)).mapv(|e| e * 0.5);
+
+    let s_l = (&term2_m - &term3_m).mapv(|e| e * gamma_m / s) + (&term2_p - &term3_p).mapv(|e| e * gamma_p / s);
+
+    // 3) enforce Tr(ρ)=1 by replacing last row of L
+    let mut l_mod = s_l.clone();
     for j in 0..n {
         l_mod[(n-1, j)] = Complex64::new(0.0, 0.0);
     }
@@ -111,38 +109,33 @@ fn steady_state(
         l_mod[(n-1, i*d + i)] = Complex64::new(1.0, 0.0);
     }
 
-    // 3) RHS = [0,…,0,1]^T
+    // 4) RHS = [0,...,1]^T
     let mut b = Array1::<Complex64>::zeros(n);
     b[n-1] = Complex64::new(1.0, 0.0);
 
-    // 4) Solve for vec(ρ_ss)
+    // 5) solve for vec(ρ_ss)
     let rho_vec = l_mod
         .solve_into(b)
         .expect("Failed to solve steady state");
 
-    // 5) Reshape into d×d ρ_ss
+    // 6) reshape → d×d
     let mut rho_ss = Array2::from_shape_vec((d, d), rho_vec.to_vec())
         .expect("Reshape error");
 
-    let tr: Complex64 = rho_ss.indexed_iter()
-                        .filter(|((i, j), _)| i == j)
-                        .map(|(_, &val)| val)
-                        .sum();
-    
+    // 7) symmetrize to enforce Hermiticity
+    let rho_hc = rho_ss.t().mapv(|c| c.conj());
+    rho_ss = (&rho_ss + &rho_hc) * Complex64::new(0.5, 0.0);
+
+    // 8) renormalize trace
+    let tr: Complex64 = rho_ss.diag().iter().copied().sum();
     rho_ss *= Complex64::new(1.0, 0.0) / tr;
 
-    // tr = rho_ss.indexed_iter()
-    //                     .filter(|((i, j), _)| i == j)
-    //                     .map(|(_, &val)| val)
-    //                     .sum();
-    
-    // println!("{},{}", tr.re, tr.im);
+    // 9) diagonalize (Hermitian)
+    let (eigvals, eigvecs) = rho_ss.eigh(UPLO::Lower)
+        .expect("ρ_ss diagonalization failed");
 
-    // 6) Diagonalize ρ_ss (Hermitian) for sampling
-    let (eigvals, eigvecs) = rho_ss
-        .clone()
-        .eigh(UPLO::Lower)
-        .expect("rho_ss diagonalization failed");
+    // 10) clamp tiny negatives
+    let eigvals = eigvals.mapv(|x| if x < 0.0 { 0.0 } else { x });
 
     (rho_ss, eigvals, eigvecs)
 }
@@ -196,6 +189,10 @@ fn simulate_trajectory(
             break;
         }
     }
+    // println!("{:?}",probabilities);
+    // println!("{}",eigvals_sum);
+    // println!("{}",i);
+
 
     // Extract and normalize the selected eigenvector
     let mut psi: Array1<Complex64> = eigvecs.column(i).to_owned();
@@ -441,7 +438,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     
     let n_pts = 1_usize;
 
-    let num_trajectories = 100;
+    let num_trajectories = 10;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda) = generate_parameter_vectors(n_pts);

@@ -186,10 +186,12 @@ fn optimal_threshold(
             let mut sum_sq = vec![0.0; m_values.len()];
             let mut cnt    = vec![0;   m_values.len()];
 
+            let betawc = 0.1;
+
             let s_int = s as i64;
             for i in 0..max_files {
                 let dir_idx = i / 1_000;
-                let subdir = format!("{}/l{:.2}_s{}/{:05}", base_dir, lambda, s_int, dir_idx);
+                let subdir = format!("{}/l{:.2}_s{}_b{:.2}/{:05}", base_dir, lambda, betawc, s_int, dir_idx);
                 let traj = format!("{}/traj_{:05}.zst", subdir, i);
                 let path = Path::new(&traj);
                 if !path.exists() { break; }
@@ -289,7 +291,7 @@ fn analyze_data(
             let s_int = s as i64;
             for i in 0..num_trajectories {
                 let dir_idx = i / 1_000;
-                let subdir = format!("{}/l{:.2}_s{}/{:05}", base_dir, lambda, s_int, dir_idx);
+                let subdir = format!("{}/l{:.2}_s{}_b0.10/{:05}", base_dir, lambda, s_int, dir_idx);
                 let traj = format!("{}/traj_{:05}.zst", subdir, i);
                 let path = Path::new(&traj);
                 if !path.exists() { break; }
@@ -309,6 +311,8 @@ fn analyze_data(
                 let (mut last_t_k, mut last_e_k, mut last_a_k) = (t0, e0, 0usize);
                 let (mut last_t_n, mut last_e_n, mut last_a_n) = (t0, e0, 0usize);
                 let (mut last_t_q, mut last_e_q, mut last_a_q) = (t0, e0, 0usize);
+
+                // println!("initial{}",t0);
 
                 // output Δ‑arrays
                 let mut ticks_k = Vec::new();
@@ -347,7 +351,7 @@ fn analyze_data(
                             if id == 1 { count_one  += 1; diff -= 1; }
 
                             // a) every m total → k
-                            if count_total == next_k {
+                            if count_total >= next_k {
                                 // compute deltas relative to last_k
                                 ticks_k.push(          t - last_t_k);
                                 entropys_tick_k.push(  e - last_e_k);
@@ -358,7 +362,7 @@ fn analyze_data(
                             }
 
                             // b) every m zeros → n
-                            if count_zero == next_n {
+                            if count_zero >= next_n {
                                 ticks_n.push(          t - last_t_n);
                                 entropys_tick_n.push(  e - last_e_n);
                                 activity_tick_n.push(count_total - last_a_n);
@@ -367,7 +371,7 @@ fn analyze_data(
                             }
 
                             // c) every m diff → q
-                            if diff == next_q as isize {
+                            if diff >= next_q as isize {
                                 ticks_q.push(          t - last_t_q);
                                 entropys_tick_q.push(  e - last_e_q);
                                 activity_tick_q.push(count_total - last_a_q);
@@ -379,16 +383,20 @@ fn analyze_data(
                         Err(e) => return Err(Box::new(e)),
                     }
                 }
+                // println!("{}", ticks_n.len());
 
                 // ——— Drop the first element in-place ———
-                if !ticks_n.is_empty() {
-                    ticks_n_set.push(ticks_n.swap_remove(0));
+                if ticks_n.len() > 1 {
+                    let rest = ticks_n.split_off(1);   // removes [t1, t2, …] into `rest`
+                    ticks_n_set.extend(rest.into_iter());
                 }
-                if !ticks_k.is_empty() {
-                    ticks_k_set.push(ticks_k.swap_remove(0));
+                if ticks_k.len() > 1 {
+                    let rest = ticks_k.split_off(1);   // removes [t1, t2, …] into `rest`
+                    ticks_k_set.extend(rest.into_iter());
                 }
-                if !ticks_q.is_empty() {
-                    ticks_q_set.push(ticks_q.swap_remove(0));
+                if ticks_q.len() > 1 {
+                    let rest = ticks_q.split_off(1);   // removes [t1, t2, …] into `rest`
+                    ticks_q_set.extend(rest.into_iter());
                 }
 
                 // If you need to keep the original `activity_tick_*` Vecs elsewhere, clone once:
@@ -431,7 +439,7 @@ fn analyze_data(
                     .map(|&e| (-e).exp())
                     .sum::<f64>();
             }
-
+            println!("ticks{}",ticks_n_set.len());
             println!("Exponentials {}", exp_entropy_mar_n_sum/num_trajectories as f64);
             println!("Exponentials {}", exp_entropy_tick_n_sum/ticks_n_set.len() as f64);
         }
@@ -549,7 +557,7 @@ fn analyze_data(
 
 
 fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
-    let init_s = 20.0_f64;
+    let init_s = 50.0_f64;
     let last_s = 50.0_f64;
     let init_lambda = 2.0_f64;
     let last_lambda = 4.0_f64;
@@ -592,13 +600,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     
     println!("Analyzing data");
     // In this part there is a file in output with fromat l{lambda}_s{s}, with files l{lambda}_s{s}/{:05}/traj_{:05}.zst
-    let num_trajectories = 100;
+    let num_trajectories = 10;
 
-    let optimal_m = optimal_threshold(&vec_lambda, &vec_s, num_trajectories)?;
+    // let optimal_m = optimal_threshold(&vec_lambda, &vec_s, num_trajectories)?;
 
-    let what = analyze_data(&vec_lambda, &vec_s, num_trajectories, 5.);
+    let what = analyze_data(&vec_lambda, &vec_s, num_trajectories, 2.);
 
-    println!("{:?}", optimal_m);
+    // println!("{:?}", optimal_m);
 
 
 
