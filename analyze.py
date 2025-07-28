@@ -51,7 +51,7 @@ def scan_Ms_streaming(folder, M_values, jump_type):
         Ms.append(m); As.append(A)
     return np.array(Ms), np.array(As)
 
-def find_optimal_M(folder, jump_type, M_max=3000, coarse_step=15, fine_win=50):
+def find_optimal_M(folder, jump_type, M_max=1250, coarse_step=5, fine_win=50):
     Mc, Ac = scan_Ms_streaming(folder, list(range(coarse_step, M_max+1, coarse_step)), jump_type)
     M0 = Mc[np.nanargmax(Ac)]
     lo, hi = max(1,M0-fine_win), min(M_max,M0+fine_win)

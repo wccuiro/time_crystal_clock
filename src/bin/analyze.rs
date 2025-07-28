@@ -131,7 +131,7 @@ fn optimal_threshold(
     max_files: usize,
 ) -> Result<Vec<f64>, Box<dyn std::error::Error>> {
     let n_pts = 1000;
-    let init_m = 5.0_f64;
+    let init_m = 1.0_f64;
     let last_m = 2000.0_f64;
 
     let m_values: Vec<f64> = if n_pts == 1 {
@@ -149,79 +149,85 @@ fn optimal_threshold(
     let jump_type = 0_u8; // <-- you should set this appropriately
     let base_dir = "output"; // <-- update if needed
 
-    for &lambda in vec_lambda {
-        for &s in vec_s {
-            let mut sum    = vec![0.0; m_values.len()];
-            let mut sum_sq = vec![0.0; m_values.len()];
-            let mut cnt    = vec![0;   m_values.len()];
+    for (&lambda, &s) in vec_lambda.iter().zip(vec_s.iter()) {
+        // println!("lambda: {}, s: {}", lambda, s);
+        let mut sum    = vec![0.0; m_values.len()];
+        let mut sum_sq = vec![0.0; m_values.len()];
+        let mut cnt    = vec![0;   m_values.len()];
 
-            let betawc = 0.1;
+        let betawc = 2.0;
 
-            let s_int = s as i64;
-            for i in 0..max_files {
-                let dir_idx = i / 1_000;
-                let subdir = format!("{}/l{:.2}_s{}_b{:.2}/{:05}", base_dir, lambda, betawc, s_int, dir_idx);
-                let traj = format!("{}/traj_{:05}.zst", subdir, i);
-                let path = Path::new(&traj);
-                if !path.exists() { break; }
+        let s_int = s as i64;
+        for i in 0..max_files {
+            let dir_idx = i / 1_000;
+            let subdir = format!("{}/l{:.2}_s{}_b{:.2}/{:05}", base_dir, lambda, s_int, betawc, dir_idx);
+            // println!("{}", subdir);
+            let traj = format!("{}/traj_{:05}.zst", subdir, i);
+            let path = Path::new(&traj);
+            if !path.exists() { break; }
 
-                let file = File::open(path)?;
-                let mut dec = Decoder::new(BufReader::new(file))?;
-                let mut times = Vec::new();
-                loop {
-                    let mut buf = [0u8; 1 + 8 + 8];
-                    match dec.read_exact(&mut buf) {
-                        Ok(()) => {
-                            let id = buf[0];
-                            let t = f64::from_le_bytes(buf[1..9].try_into().unwrap());
-                            if id == jump_type {
-                                times.push(t);
-                            }
+            let file = File::open(path)?;
+            let mut dec = Decoder::new(BufReader::new(file))?;
+            let mut times = Vec::new();
+            loop {
+                let mut buf = [0u8; 1 + 8 + 8];
+                match dec.read_exact(&mut buf) {
+                    Ok(()) => {
+                        let id = buf[0];
+                        let t = f64::from_le_bytes(buf[1..9].try_into().unwrap());
+                        if id == jump_type {
+                            times.push(t);
                         }
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                        Err(e) => return Err(Box::new(e)),
                     }
-                }
-
-                if times.len() <= 1 { continue; }
-                let slice = &times[1..];
-
-                for (j, &m) in m_values.iter().enumerate() {
-                    let chunks = slice.len() as i32 / m as i32;
-                    if chunks == 0 { continue; }
-
-                    let mut last = 0.0;
-                    for k in 1..=chunks {
-                        let idx = (k * m as i32 - 1) as usize;
-                        let delta = slice[idx] - last;
-                        last = slice[idx];
-                        sum[j] += delta;
-                        sum_sq[j] += delta * delta;
-                    }
-                    cnt[j] += chunks;
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                    Err(e) => return Err(Box::new(e)),
                 }
             }
 
-            let mut acts = Vec::with_capacity(m_values.len());
-            for j in 0..m_values.len() {
-                if cnt[j] == 0 {
-                    acts.push(0.0);
-                } else {
-                    let n = cnt[j] as f64;
-                    let mu = sum[j] / n;
-                    let var = sum_sq[j] / n - mu * mu;
-                    acts.push(if var > 0.0 { mu * mu / var } else { 0.0 });
+            if times.len() <= 1 { continue; }
+            let slice = &times[1..];
+
+            for (j, &m) in m_values.iter().enumerate() {
+                let chunks = slice.len() as i32 / m as i32;
+                if chunks == 0 { continue; }
+
+                let mut last = 0.0;
+                for k in 1..=chunks {
+                    let idx = (k * m as i32 - 1) as usize;
+                    let delta = slice[idx] - last;
+                    last = slice[idx];
+                    sum[j] += delta;
+                    sum_sq[j] += delta * delta;
                 }
-            }
-
-            // println!("{:?}", m_values);
-            // println!("{:?}", acts);            
-
-            match find_first_peak(&acts,5,0.1) {
-                Some(index) => optimal_m.push(m_values[index]),
-                None => return Err("No local maximum found.".into()),
+                cnt[j] += chunks;
             }
         }
+
+        let mut acts = Vec::with_capacity(m_values.len());
+        for j in 0..m_values.len() {
+            if cnt[j] == 0 {
+                acts.push(0.0);
+            } else {
+                let n = cnt[j] as f64;
+                let mu = sum[j] / n;
+                let var = sum_sq[j] / n - mu * mu;
+                acts.push(if var > 0.0 { mu * mu / var } else { 0.0 });
+            }
+        }
+
+        // println!("{:?}", m_values);
+        // println!("{:?}", acts);            
+
+        match find_first_peak(&acts, 15, 0.1) {
+            Some(index) => optimal_m.push(m_values[index]),
+            None => {
+                optimal_m.push(0.0); // assuming m_values is of type f64
+            }
+        }
+        // match find_first_peak(&acts,50,0.5) {
+        //     Some(index) => optimal_m.push(m_values[index]),
+        //     None => return Err("No local maximum found.".into()),
+        // }
     }
 
     Ok(optimal_m)
@@ -258,7 +264,7 @@ fn analyze_data(
     let s_int = s as i64;
     for i in 0..num_trajectories {
         let dir_idx = i / 1_000;
-        let subdir = format!("{}/l{:.2}_s{}_b0.10/{:05}", base_dir, lambda, s_int, dir_idx);
+        let subdir = format!("{}/l{:.2}_s{}_b2.00/{:05}", base_dir, lambda, s_int, dir_idx);
         let traj = format!("{}/traj_{:05}.zst", subdir, i);
         let path = Path::new(&traj);
         if !path.exists() { break; }
@@ -369,20 +375,45 @@ fn analyze_data(
         }
 
         // If you need to keep the original `activity_tick_*` Vecs elsewhere, clone once:
-        activity_tick_n.remove(0);
-        activity_tick_k.remove(0);
-        activity_tick_q.remove(0);
+        if !activity_tick_n.is_empty() {
+            activity_tick_n.remove(0);
+        }
+        if !activity_tick_k.is_empty() {
+            activity_tick_k.remove(0);
+        }
+        if !activity_tick_q.is_empty() {
+            activity_tick_q.remove(0);
+        }
 
         // ——— Compute the exp of the “mar” entropy once each ———
-        let exp_entropy_mar_n = (-entropys_tick_n[0]).exp();
-        let exp_entropy_mar_k = (-entropys_tick_k[0]).exp();
-        let exp_entropy_mar_q = (-entropys_tick_q[0]).exp();
+        let exp_entropy_mar_n = entropys_tick_n
+            .get(0)
+            .map(|v| (-v).exp())
+            .unwrap_or(0.0);
+        let exp_entropy_mar_k = entropys_tick_k
+            .get(0)
+            .map(|v| (-v).exp())
+            .unwrap_or(0.0);
+        let exp_entropy_mar_q = entropys_tick_q
+            .get(0)
+            .map(|v| (-v).exp())
+            .unwrap_or(0.0);
+
+        if entropys_tick_n.len() > 1 {
+            entropys_tick_n.remove(0);
+        }
+        if entropys_tick_k.len() > 1 {
+            entropys_tick_k.remove(0);
+        }
+        if entropys_tick_q.len() > 1 {
+            entropys_tick_q.remove(0);
+        }
 
         // ——— Now accumulate everything directly over the slices ———
         // Sum of entropies (skipping the 0‑th)
-        entropy_tick_n_sum += entropys_tick_n[1..].iter().sum::<f64>();
-        entropy_tick_k_sum += entropys_tick_k[1..].iter().sum::<f64>();
-        entropy_tick_q_sum += entropys_tick_q[1..].iter().sum::<f64>();
+        entropy_tick_n_sum += entropys_tick_n.iter().sum::<f64>();
+        entropy_tick_k_sum += entropys_tick_k.iter().sum::<f64>();
+        entropy_tick_q_sum += entropys_tick_q.iter().sum::<f64>();
 
         // Sum of activities (skipping the 0‑th)
         activity_tick_n_sum += activity_tick_n.iter().sum::<usize>() as f64;
@@ -395,15 +426,15 @@ fn analyze_data(
         exp_entropy_mar_q_sum += exp_entropy_mar_q;
 
         // Sum of exp of each tick’s entropy (skipping the 0‑th)
-        exp_entropy_tick_n_sum += entropys_tick_n[1..]
+        exp_entropy_tick_n_sum += entropys_tick_n
             .iter()
             .map(|&e| (-e).exp())
             .sum::<f64>();
-        exp_entropy_tick_k_sum += entropys_tick_k[1..]
+        exp_entropy_tick_k_sum += entropys_tick_k
             .iter()
             .map(|&e| (-e).exp())
             .sum::<f64>();
-        exp_entropy_tick_q_sum += entropys_tick_q[1..]
+        exp_entropy_tick_q_sum += entropys_tick_q
             .iter()
             .map(|&e| (-e).exp())
             .sum::<f64>();
@@ -413,6 +444,8 @@ fn analyze_data(
     let num_ticks_n: f64 = ticks_n_set.len() as f64;
     let num_ticks_k: f64 = ticks_k_set.len() as f64;
     let num_ticks_q: f64 = ticks_q_set.len() as f64;
+
+    // println!("{}", ticks_n_set.len());
 
     // Computing accuracy
     let mean_t_n: f64 = ticks_n_set.iter().sum::<f64>() / num_ticks_n;
@@ -448,6 +481,7 @@ fn analyze_data(
     let mean_ent_n = entropy_tick_n_sum / num_ticks_n;
     let mean_ent_k = entropy_tick_k_sum / num_ticks_k;
     let mean_ent_q = entropy_tick_q_sum / num_ticks_q;
+
 
     // --- 2. Sort the waiting times ---
     let mut sorted_waits_n = ticks_n_set;
@@ -523,7 +557,7 @@ fn analyze_data(
 fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
     let init_s = 50.0_f64;
     let last_s = 50.0_f64;
-    let init_lambda = 2.0_f64;
+    let init_lambda = 0.5_f64;
     let last_lambda = 4.0_f64;
 
     let vec_s: Vec<f64>;
@@ -556,44 +590,31 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     
-    let n_pts = 1_usize;
+    let n_pts = 20_usize;
 
     
     // Generate parameter vectors
     let (vec_s, vec_lambda) = generate_parameter_vectors(n_pts);
     
+    println!("{:?},{:?}",vec_s, vec_lambda);
     println!("Analyzing data");
     // In this part there is a file in output with fromat l{lambda}_s{s}, with files l{lambda}_s{s}/{:05}/traj_{:05}.zst
-    let num_max_trajectories = 1000;
+    let num_max_trajectories = 100;
 
-    // let optimal_m = optimal_threshold(&vec_lambda, &vec_s, num_trajectories)?;
 
-    (10..num_max_trajectories)
-        .step_by(10)
-        .collect::<Vec<_>>() // Rayon needs a collection
-        .into_par_iter()
-        .for_each(|i| {
-            vec_lambda.par_iter().for_each(|lambda| {
-                vec_s.par_iter().for_each(|s| {
-                    // If analyze_data returns Result, we need to handle errors properly
-                    match analyze_data(*lambda, *s, i, 2.) {
-                        Ok(results) => {
-                            println!("{},{},{},{},{},{},{}", 
-                                i, 
-                                results.exp_entropy_mar_n, 
-                                results.exp_entropy_mar_k, 
-                                results.exp_entropy_mar_q, 
-                                results.exp_entropy_tick_n, 
-                                results.exp_entropy_tick_k, 
-                                results.exp_entropy_tick_q
-                            );
-                        }
-                        Err(e) => eprintln!("Error at i={}, lambda={}, s={}: {}", i, lambda, s, e),
-                    }
-                });
-            });
-        });
-    // println!("{:?}", optimal_m);
+    let optimal_m = optimal_threshold(&vec_lambda, &vec_s, num_max_trajectories)?;
+    
+    println!("{:?}", optimal_m);
+    
+    // for i in (10..num_max_trajectories).step_by(10) {
+    for ((&lambda, &s),&m) in vec_lambda.iter().zip(vec_s.iter()).zip(optimal_m.iter()) {
+        // println!("{},{},{}",lambda,s,m);
+        let results = analyze_data(lambda, s, num_max_trajectories, m)?;
+        // println!("{},{},{},{},{},{},{},{},{},{}", i, results.exp_entropy_mar_n, results.exp_entropy_mar_k, results.exp_entropy_mar_q, results.num_ticks_n, results.exp_entropy_tick_n, results.num_ticks_k, results.exp_entropy_tick_k, results.num_ticks_q, results.exp_entropy_tick_q);
+        // println!("{:?},{:?}", results.counts_n, results.bin_width_n);
+        println!("{}", results.accuracy_n);
+    }
+    // }
 
 
 

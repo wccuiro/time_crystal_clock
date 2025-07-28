@@ -436,9 +436,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let gamma_z = 1. ;// 1./1000.*omega_c;
     let nb = 1./(betawc.exp() - 1.);
     
-    let n_pts = 20_usize;
+    let n_pts = 1_usize;
 
-    let num_trajectories = 100;
+    let num_trajectories = 10;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda) = generate_parameter_vectors(n_pts);

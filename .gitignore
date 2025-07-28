@@ -6,5 +6,6 @@
 *.png
 *.txt
 *.csv
+*.gp
 
 *.lock
