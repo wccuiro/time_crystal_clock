@@ -393,9 +393,9 @@ fn run_quantum_simulation(config: &SimulationConfig) -> Result<(), Box<dyn std::
 }
 
 fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
-    let init_s = 50.0_f64;
+    let init_s = 25.0_f64;
     let last_s = 50.0_f64;
-    let init_lambda = 0.5_f64;
+    let init_lambda = 0.7_f64;
     let last_lambda = 4.0_f64;
 
     let vec_s: Vec<f64>;
@@ -429,7 +429,7 @@ fn generate_parameter_vectors(n_pts: usize) -> (Vec<f64>, Vec<f64>) {
 fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Fixed simulation parameters
     let dt: f64 = 0.001;            // dt = 10-3 ~20 n_ticks and after that does not increase for a threshold of 1100 and beta 2.0
-    let total_time: f64 = 5000.0;        // Total time 5000 set it to have an average of 20 n_ticks for a threshold of 1100 and beta 2.0
+    let total_time: f64 = 10000.0;        // Total time 5000 set it to have an average of 20 n_ticks for a threshold of 1100 and beta 2.0
     let omega_c: f64 = 0.01; // Frequency scale
     let beta: f64 = 2.0 / omega_c; // Inverse temperature
     let betawc = beta * omega_c;
@@ -438,7 +438,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     
     let n_pts = 1_usize;
 
-    let num_trajectories = 10;
+    let num_trajectories = 1000;
 
     // Generate parameter vectors
     let (vec_s, vec_lambda) = generate_parameter_vectors(n_pts);
